@@ -997,7 +997,7 @@ const STYLE_ITEM = "dark fantasy item, single object, dramatic lighting, dark mo
 async function generateImage(prompt, { seed, w = 1024, h = 1024 } = {}) {
   const clean = (prompt || "").replace(/\s+/g, " ").trim().slice(0, 480);
   const s = seed != null ? `&seed=${seed}` : "";
-  return `https://image.pollinations.ai/prompt/${encodeURIComponent(clean)}?width=${w}&height=${h}&nologo=true&model=flux${s}`;
+  return `https://image.pollinations.ai/prompt/${encodeURIComponent(clean)}?width=${w}&height=${h}&model=flux${s}`;
 }
 
 // Prompt-Bauer: liefern { key, prompt, seed, cat, entity }.
@@ -1091,7 +1091,7 @@ async function callClaude(messages, system, maxTokens = 1200) {
   const payload = {
     systemInstruction: { parts: [{ text: system }] },
     contents,
-    generationConfig: { maxOutputTokens: maxTokens, temperature: 0.85 },
+    generationConfig: { maxOutputTokens: maxTokens, temperature: 0.85, thinkingConfig: { thinkingBudget: 0 } },
     safetySettings: [
       { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
       { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
@@ -1256,7 +1256,6 @@ function FantasyImage({ url, fallbackSvg, fit = "cover", onClick, withSpinner = 
       <img
         src={url}
         alt=""
-        referrerPolicy="no-referrer"
         onLoad={() => setLoaded(true)}
         onError={() => setErrored(true)}
         style={{ width: "100%", height: "100%", objectFit: fit, display: "block", opacity: loaded ? 1 : 0, transition: "opacity 0.5s" }}
@@ -1780,7 +1779,7 @@ function GameScreen({ char: initialChar, messages: initialMsgs, worldState: init
       const raw = await generateNarratorResponse(char, [], worldState, introPrompt, options);
       processNarratorResponse(raw, introPrompt, true);
     } catch (e) {
-      appendMessage("system", "Die Geister schweigen... Versuche es erneut.");
+      appendMessage("system", "Fehler beim Start: " + (e && e.message ? e.message : e));
     }
     setLoading(false);
   };
@@ -1879,7 +1878,7 @@ function GameScreen({ char: initialChar, messages: initialMsgs, worldState: init
       const raw = await generateNarratorResponse(char, history, worldState, txt, options);
       await processNarratorResponse(raw, txt);
     } catch (e) {
-      appendMessage("system", "Die Verbindung zur anderen Welt ist gerissen...");
+      appendMessage("system", "Fehler: " + (e && e.message ? e.message : e));
     }
     setLoading(false);
     setTimeout(() => inputRef.current?.focus(), 100);
