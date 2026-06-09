@@ -1,4 +1,3 @@
-```html
 <!DOCTYPE html>
 <html lang="de">
 <head>
@@ -26,10 +25,24 @@ const { useState, useEffect, useRef, useCallback } = React;
 // Standalone-Konfiguration: Gemini-API mit eigenem Schluessel des Spielers.
 let API_KEY = "";
 const GEMINI_MODEL = "gemini-2.5-flash";
+const GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image"; // "Nano Banana" - Bildmodell, erfordert ggf. aktivierte Abrechnung im Google-Konto
+
 
 // ═══════════════════════════════════════════════════
 // CONSTANTS & CONFIG
 // ═══════════════════════════════════════════════════
+// ╔══════════════════════════════════════════════════════════════════════╗
+// ║  xAI / GROK KONFIGURATION                                             ║
+// ║  Grok: trag hier die AKTUELLEN Modellnamen ein (Namen ändern sich!).  ║
+// ║  Den API-Key NICHT hart in den Client schreiben, wenn vermeidbar –    ║
+// ║  siehe ANLEITUNG_fuer_Grok.md, Abschnitt "API-Key & CORS".            ║
+// ╚══════════════════════════════════════════════════════════════════════╝
+// ═══════════════════════════════════════════════════
+// CONSTANTS & CONFIG
+// ═══════════════════════════════════════════════════
+const MODEL = "claude-sonnet-4-20250514"; // Erzähler (Anthropic-API, in dieser Umgebung keyless)
+// Bilder: keyless Diffusions-Dienst (Flux via Pollinations). Unterstützt Seeds -> Konsistenz.
+
 const RACES = ["Mensch", "Halbelf", "Waldelf", "Hochelf", "Zwerg", "Halbling", "Tiefling", "Halbork", "Aasimar", "Drow", "Gnome", "Drachengeb."];
 const CLASSES = ["Krieger", "Magier", "Schurke", "Kleriker", "Waldläufer", "Paladin", "Barbar", "Hexenmeister", "Druide", "Barde", "Mönch", "Nekromant"];
 const BACKGROUNDS = ["Adliger", "Söldner", "Straßenkind", "Gelehrter", "Händler", "Verbannter", "Kultist", "Schmied", "Dieb", "Priester", "Abenteurer", "Verbrecher"];
@@ -938,7 +951,7 @@ const SAVE_SLOTS = 3;
 const defaultSaves = Array(SAVE_SLOTS).fill(null);
 const defaultOptions = { mature: true, imagery: true, autoScroll: true, narratorVerbosity: 2, fontSize: 16 };
 
-// Speicherung ueber localStorage
+// Speicherung ueber localStorage (funktioniert auf einer echten Webseite/GitHub Pages).
 function loadSaves() {
   try { const s = JSON.parse(localStorage.getItem("df_saves") || "null"); return Array.isArray(s) ? s : defaultSaves.slice(); }
   catch (e) { return defaultSaves.slice(); }
@@ -950,6 +963,8 @@ function loadOptions() {
 }
 function persistOptions(opts) { try { localStorage.setItem("df_options", JSON.stringify(opts)); } catch (e) {} }
 
+// Portabler Spielstand-Code: unabhängig von Browser-Speicher. Der Spieler kopiert
+// den Code und kann ihn jederzeit wieder einfügen (übersteht Neustarts/Versionen).
 function encodeSave(state) {
   try { return btoa(unescape(encodeURIComponent(JSON.stringify(state)))); }
   catch { try { return btoa(JSON.stringify(state)); } catch { return ""; } }
@@ -962,8 +977,12 @@ function decodeSave(code) {
 }
 
 // ═══════════════════════════════════════════════════
-// IMAGE GENERATION (Gemini API) + FALLBACKS
+// IMAGE (SVG ART) GENERATION + FALLBACKS
 // ═══════════════════════════════════════════════════
+// IMAGE GENERATION (real diffusion images via keyless service)
+//  + deterministic SVG fallback if the image cannot load
+// ═══════════════════════════════════════════════════
+
 function hashStr(str) {
   let h = 0;
   for (let i = 0; i < (str || "x").length; i++) h = (h * 31 + str.charCodeAt(i)) & 0xffffffff;
@@ -974,43 +993,37 @@ const STYLE_SCENE = "dark high fantasy, cinematic wide shot, dramatic volumetric
 const STYLE_PORTRAIT = "dark fantasy character portrait, detailed face, dramatic lighting, painterly, intricate costume, concept art, moody";
 const STYLE_ITEM = "dark fantasy item, single object, dramatic lighting, dark moody background, detailed digital painting, intricate";
 
-// Bilder über die offizielle Google Gemini API (Imagen 3)
+// Bilder über Gemini (Nano Banana / gemini-2.5-flash-image) mit dem Schlüssel des Spielers.
+// Liefert eine data-URL (base64). Hinweis: Google-Bildmodelle erfordern i.d.R. eine
+// aktivierte Abrechnung (~4 Cent/Bild); ohne Freischaltung schlägt der Aufruf fehl.
 async function generateImage(prompt, { seed, w = 1024, h = 1024 } = {}) {
-  if (!API_KEY) throw new Error("Kein API Key");
-  
-  // Imagen API benoetigt ein Text-Format fuer die Aspect Ratio
-  let aspectRatio = "1:1";
-  if (w > h) aspectRatio = "16:9";
-  else if (h > w) aspectRatio = "3:4";
-
-  const url = "https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict?key=" + encodeURIComponent(API_KEY);
-  
+  if (!API_KEY) throw new Error("Kein API-Schlüssel.");
+  const clean = (prompt || "").replace(/\s+/g, " ").trim().slice(0, 700);
+  const ratio = w >= h * 1.4 ? ", 16:9 widescreen landscape composition" : (h > w ? ", 3:4 portrait composition" : "");
+  const url = "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_IMAGE_MODEL + ":generateContent?key=" + encodeURIComponent(API_KEY);
   const payload = {
-    instances: [{ prompt: prompt }],
-    parameters: { 
-      sampleCount: 1,
-      aspectRatio: aspectRatio
-    }
+    contents: [{ role: "user", parts: [{ text: clean + ratio }] }],
+    generationConfig: { responseModalities: ["IMAGE"] }
   };
-
-  const resp = await fetch(url, {
+  const data = await fetchJsonWithRetry(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
-  });
-  
-  const data = await resp.json();
-  if (!resp.ok) {
-    console.warn("Bildgenerierung fehlgeschlagen (Sicherheitsfilter oder API Fehler):", data);
-    throw new Error(data?.error?.message || "Fehler bei Bildgenerierung");
+  }, 1);
+  const parts = (data && data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) || [];
+  const img = parts.find(p => p.inlineData && p.inlineData.data);
+  if (!img) {
+    const reason = (data && data.candidates && data.candidates[0] && data.candidates[0].finishReason) || (data && data.promptFeedback && data.promptFeedback.blockReason);
+    throw new Error(reason ? ("kein Bild (" + reason + ")") : "kein Bild erhalten");
   }
-  
-  const b64 = data.predictions?.[0]?.bytesBase64Encoded;
-  if (!b64) throw new Error("Kein Bild zurückgegeben.");
-  
-  return "data:image/png;base64," + b64;
+  return "data:" + (img.inlineData.mimeType || "image/png") + ";base64," + img.inlineData.data;
 }
 
+// Prompt-Bauer: liefern { key, prompt, seed, cat, entity }.
+// WICHTIG für Konsistenz: jede Entität hat einen FESTEN Seed (hashStr) und eine
+// eingefrorene Aussehensbeschreibung. Das Hauptporträt wird nur EINMAL erzeugt und
+// danach wiederverwendet -> immer identisch. Weitere Albumbilder nutzen denselben
+// Seed + dieselbe Beschreibung, variieren nur Pose/Kontext.
 function scenePromptFor(sceneVisual, sceneTitle, mood, idx) {
   return { key: `scene:${idx}`, prompt: `${sceneVisual || sceneTitle}, ${mood || "ominous"} atmosphere, ${STYLE_SCENE}`, seed: hashStr(sceneTitle + "_" + idx), w: 1024, h: 576, cat: "location", entity: sceneTitle || "Ort", caption: sceneTitle || "Szene" };
 }
@@ -1066,7 +1079,7 @@ function fallbackPortraitSvg(seedText, kind = "person") {
 }
 
 // ═══════════════════════════════════════════════════
-// AI API CALLS (Gemini Text)
+// AI API CALLS
 // ═══════════════════════════════════════════════════
 async function fetchJsonWithRetry(url, opts, retries = 2) {
   const delays = [800, 2000, 4500];
@@ -1083,6 +1096,8 @@ async function fetchJsonWithRetry(url, opts, retries = 2) {
   }
 }
 
+// Erzaehler ueber die Gemini-API (Schluessel des Spielers, im Browser gespeichert).
+// Ersetzt den frueheren Anthropic-Aufruf, der nur innerhalb von Claude funktionierte.
 async function callClaude(messages, system, maxTokens = 1200) {
   if (!API_KEY) throw new Error("Kein API-Schluessel hinterlegt.");
   const contents = (messages || [])
@@ -1095,7 +1110,7 @@ async function callClaude(messages, system, maxTokens = 1200) {
   const payload = {
     systemInstruction: { parts: [{ text: system }] },
     contents,
-    generationConfig: { maxOutputTokens: maxTokens, temperature: 0.85 },
+    generationConfig: { maxOutputTokens: maxTokens, temperature: 0.85, thinkingConfig: { thinkingBudget: 0 } },
     safetySettings: [
       { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
       { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
@@ -1118,10 +1133,16 @@ async function callClaude(messages, system, maxTokens = 1200) {
   return text;
 }
 
+// Keep the model prompt small for speed: only send what matters for continuity.
 function trimWorldState(ws) {
   const npcs = {};
   Object.entries(ws.npcs || {}).slice(-12).forEach(([k, v]) => { npcs[k] = { name: v.name, role: v.role, description: v.description }; });
-  return { currentLocation: ws.currentLocation, knownLocations: Object.keys(ws.locations || {}), npcs, quests: (ws.quests || []).slice(-6) };
+  return {
+    currentLocation: ws.currentLocation,
+    knownLocations: Object.keys(ws.locations || {}),
+    npcs,
+    quests: (ws.quests || []).slice(-6),
+  };
 }
 
 async function generateNarratorResponse(char, history, worldState, playerInput, options) {
@@ -1157,30 +1178,41 @@ NARRATION RULES:
 OUTPUT FORMAT (CRITICAL): First write the prose narration. Then, on a NEW line, output the metadata block. It MUST start with <<<JSON>>> and END with <<<END_JSON>>>. Keep the JSON COMPACT (sceneVisual max 18 words). Only include NEWLY introduced npcs. Never omit the closing <<<END_JSON>>> marker. Format:
 <<<JSON>>>{"mood":"combat|mystical|exploration|tavern|danger|neutral","sceneTitle":"short title","sceneVisual":"short vivid visual of the scene: place, lighting, key subjects","worldStateUpdates":{"npcs":{"name_key":{"name":"...","description":"one-sentence appearance","role":"..."}},"currentLocation":{"name":"...","desc":"..."}},"hpChange":0,"mpChange":0,"xpGain":0,"roll":null,"newInventoryItems":[],"removeInventoryItems":[]}<<<END_JSON>>>`;
 
-  const msgs = [...history.slice(-10).map(h => ({ role: h.role, content: h.content })), { role: "user", content: playerInput }];
+  const msgs = [
+    ...history.slice(-10).map(h => ({ role: h.role, content: h.content })),
+    { role: "user", content: playerInput }
+  ];
   return await callClaude(msgs, system, maxTok);
 }
 
+// Pull the first balanced {...} object out of a string (tolerant of trailing junk)
 function extractJsonObject(str) {
   const start = str.indexOf("{");
   if (start === -1) return null;
   let depth = 0, inStr = false, esc = false;
   for (let i = start; i < str.length; i++) {
     const c = str[i];
-    if (inStr) { if (esc) esc = false; else if (c === "\\") esc = true; else if (c === '"') inStr = false; } 
-    else { if (c === '"') inStr = true; else if (c === "{") depth++; else if (c === "}") { depth--; if (depth === 0) return str.slice(start, i + 1); } }
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+    } else {
+      if (c === '"') inStr = true;
+      else if (c === "{") depth++;
+      else if (c === "}") { depth--; if (depth === 0) return str.slice(start, i + 1); }
+    }
   }
-  return null; 
+  return null; // unbalanced (truncated)
 }
 
 function cleanMarkdown(t) {
   return (t || "")
-    .replace(/<<<\/?[A-Z_]*>>>/g, "")          
-    .replace(/^\s*[-*_]{3,}\s*$/gm, "")          
-    .replace(/\*\*([^*]+)\*\*/g, "$1")           
-    .replace(/\*([^*]+)\*/g, "$1")               
-    .replace(/(^|\s)_([^_]+)_(\s|$)/g, "$1$2$3") 
-    .replace(/^#{1,6}\s*/gm, "")                 
+    .replace(/<<<\/?[A-Z_]*>>>/g, "")          // stray markers
+    .replace(/^\s*[-*_]{3,}\s*$/gm, "")          // hr / separators
+    .replace(/\*\*([^*]+)\*\*/g, "$1")           // **bold**
+    .replace(/\*([^*]+)\*/g, "$1")               // *italic*
+    .replace(/(^|\s)_([^_]+)_(\s|$)/g, "$1$2$3") // _italic_
+    .replace(/^#{1,6}\s*/gm, "")                 // headers
     .replace(/[ \t]{2,}/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
@@ -1189,13 +1221,16 @@ function cleanMarkdown(t) {
 function parseNarratorResponse(raw) {
   let meta = { mood: "neutral", sceneTitle: "", sceneVisual: "", worldStateUpdates: {}, hpChange: 0, mpChange: 0, xpGain: 0, roll: null, newInventoryItems: [], removeInventoryItems: [] };
   let narration = raw || "";
+
   const startIdx = narration.indexOf("<<<JSON>>>");
   if (startIdx !== -1) {
+    // Everything before the marker is the prose; everything after is metadata (even if END marker missing/truncated)
     const after = narration.slice(startIdx + "<<<JSON>>>".length).replace(/<<<END_JSON>>>/g, "");
     narration = narration.slice(0, startIdx);
     const objStr = extractJsonObject(after);
     if (objStr) { try { meta = { ...meta, ...JSON.parse(objStr) }; } catch {} }
   } else {
+    // No marker — maybe a raw {...} got appended at the very end; try to peel it off
     const tail = narration.lastIndexOf("\n{");
     if (tail !== -1) {
       const objStr = extractJsonObject(narration.slice(tail));
@@ -1204,6 +1239,7 @@ function parseNarratorResponse(raw) {
       }
     }
   }
+
   narration = cleanMarkdown(narration);
   return { narration, meta };
 }
@@ -1212,25 +1248,42 @@ function parseNarratorResponse(raw) {
 // COMPONENTS
 // ═══════════════════════════════════════════════════
 
+// ── Dice Animation ──
 function DiceDisplay({ show, result }) {
   if (!show) return null;
   const emoji = result >= 18 ? "🎲" : result >= 12 ? "🎲" : result <= 3 ? "💀" : "🎲";
   return <div className="dice-display">{emoji}<div style={{ fontSize: "28px", fontFamily: "'Cinzel', serif", color: result >= 15 ? "#c9a84c" : result <= 5 ? "#c0392b" : "#9b8a9e" }}>{result}</div></div>;
 }
 
+// ── Fantasy Image: real AI image with SVG fallback + loading spinner ──
 function FantasyImage({ url, fallbackSvg, fit = "cover", onClick, withSpinner = true }) {
   const [errored, setErrored] = useState(false);
   const [loaded, setLoaded] = useState(false);
   useEffect(() => { setErrored(false); setLoaded(false); }, [url]);
-  if (!url || errored) return <div style={{ width: "100%", height: "100%", overflow: "hidden" }} onClick={onClick} dangerouslySetInnerHTML={{ __html: fallbackSvg }} />;
+
+  if (!url || errored) {
+    return <div style={{ width: "100%", height: "100%", overflow: "hidden" }} onClick={onClick} dangerouslySetInnerHTML={{ __html: fallbackSvg }} />;
+  }
   return (
     <div style={{ width: "100%", height: "100%", position: "relative", overflow: "hidden", background: "#0a0608" }} onClick={onClick}>
-      {withSpinner && !loaded && <div className="scene-loading" style={{ position: "absolute", inset: 0 }}><span className="rune-spin">᛫</span><span style={{ fontSize: 12 }}>Bild wird erschaffen...</span></div>}
-      <img src={url} alt="" onLoad={() => setLoaded(true)} onError={() => setErrored(true)} style={{ width: "100%", height: "100%", objectFit: fit, display: "block", opacity: loaded ? 1 : 0, transition: "opacity 0.5s" }} />
+      {withSpinner && !loaded && (
+        <div className="scene-loading" style={{ position: "absolute", inset: 0 }}>
+          <span className="rune-spin">᛫</span>
+          <span style={{ fontSize: 12 }}>Bild wird erschaffen...</span>
+        </div>
+      )}
+      <img
+        src={url}
+        alt=""
+        onLoad={() => setLoaded(true)}
+        onError={() => setErrored(true)}
+        style={{ width: "100%", height: "100%", objectFit: fit, display: "block", opacity: loaded ? 1 : 0, transition: "opacity 0.5s" }}
+      />
     </div>
   );
 }
 
+// ── Lightbox (fullscreen viewer for a LIST of images, with prev/next) ──
 function Lightbox({ images, index = 0, portrait, fit, onClose }) {
   const [i, setI] = useState(index);
   const n = images.length;
@@ -1260,6 +1313,7 @@ function Lightbox({ images, index = 0, portrait, fit, onClose }) {
   );
 }
 
+// ── Album Modal (grid of all images of one entity) ──
 function AlbumModal({ title, subtitle, entries, imgCache, portrait, busy, onOpenImage, onGenerateMore, onClose }) {
   const items = entries.length ? entries : [];
   return (
@@ -1294,6 +1348,7 @@ function AlbumModal({ title, subtitle, entries, imgCache, portrait, busy, onOpen
   );
 }
 
+// ── Main Menu ──
 function MainMenu({ hasSave, onNew, onLoad, onOptions }) {
   const [date] = useState(now());
   return (
@@ -1309,11 +1364,12 @@ function MainMenu({ hasSave, onNew, onLoad, onOptions }) {
         <button className="btn-menu" onClick={onLoad}>📜 Spielstand laden / Code</button>
         <button className="btn-menu" onClick={onOptions}>⚙ Einstellungen</button>
       </div>
-      <div className="menu-version">Version 1.1 · Mit Gemini Imagen 3 · {date}</div>
+      <div className="menu-version">Version 1.0 · {date}</div>
     </div>
   );
 }
 
+// ── Options Screen ──
 function OptionsScreen({ opts, onChange, onBack }) {
   return (
     <div className="screen options-screen">
@@ -1321,37 +1377,60 @@ function OptionsScreen({ opts, onChange, onBack }) {
         <div className="options-title">⚙ Einstellungen</div>
         <div className="options-group">
           <div className="options-group-label">Spielinhalt</div>
-          <div className="options-row"><span className="options-label">Reifer Inhalt (18+)</span><div className={`toggle ${opts.mature ? "on" : ""}`} onClick={() => onChange({ ...opts, mature: !opts.mature })} /></div>
-          <div className="options-row"><span className="options-label">Szenenbilder generieren</span><div className={`toggle ${opts.imagery ? "on" : ""}`} onClick={() => onChange({ ...opts, imagery: !opts.imagery })} /></div>
-          <div className="options-row"><span className="options-label">Auto-Scrollen</span><div className={`toggle ${opts.autoScroll ? "on" : ""}`} onClick={() => onChange({ ...opts, autoScroll: !opts.autoScroll })} /></div>
+          <div className="options-row">
+            <span className="options-label">Reifer Inhalt (18+)</span>
+            <div className={`toggle ${opts.mature ? "on" : ""}`} onClick={() => onChange({ ...opts, mature: !opts.mature })} />
+          </div>
+          <div className="options-row">
+            <span className="options-label">Szenenbilder generieren</span>
+            <div className={`toggle ${opts.imagery ? "on" : ""}`} onClick={() => onChange({ ...opts, imagery: !opts.imagery })} />
+          </div>
+          <div className="options-row">
+            <span className="options-label">Auto-Scrollen</span>
+            <div className={`toggle ${opts.autoScroll ? "on" : ""}`} onClick={() => onChange({ ...opts, autoScroll: !opts.autoScroll })} />
+          </div>
         </div>
         <div className="options-group">
           <div className="options-group-label">Erzähler</div>
           <div className="options-row">
             <span className="options-label">Ausführlichkeit</span>
-            <div className="slider-wrap"><input type="range" className="slider" min="1" max="3" value={opts.narratorVerbosity} onChange={e => onChange({ ...opts, narratorVerbosity: +e.target.value })} /><span className="slider-val">{["Knapp","Mittel","Detailliert"][opts.narratorVerbosity - 1]}</span></div>
+            <div className="slider-wrap">
+              <input type="range" className="slider" min="1" max="3" value={opts.narratorVerbosity} onChange={e => onChange({ ...opts, narratorVerbosity: +e.target.value })} />
+              <span className="slider-val">{["Knapp","Mittel","Detailliert"][opts.narratorVerbosity - 1]}</span>
+            </div>
           </div>
         </div>
         <div className="options-group">
           <div className="options-group-label">Anzeige</div>
           <div className="options-row">
             <span className="options-label">Schriftgröße</span>
-            <div className="slider-wrap"><input type="range" className="slider" min="13" max="20" value={opts.fontSize} onChange={e => onChange({ ...opts, fontSize: +e.target.value })} /><span className="slider-val">{opts.fontSize}px</span></div>
+            <div className="slider-wrap">
+              <input type="range" className="slider" min="13" max="20" value={opts.fontSize} onChange={e => onChange({ ...opts, fontSize: +e.target.value })} />
+              <span className="slider-val">{opts.fontSize}px</span>
+            </div>
           </div>
         </div>
-        <div className="modal-actions"><button className="btn-action" onClick={onBack}>← Zurück</button></div>
+        <div className="modal-actions">
+          <button className="btn-action" onClick={onBack}>← Zurück</button>
+        </div>
       </div>
     </div>
   );
 }
 
+// ── Save/Load Screen ──
 function SavesScreen({ saves, mode, currentGame, exportCode, onSave, onLoad, onDelete, onImport, onBack }) {
   const [importText, setImportText] = useState("");
   const [copied, setCopied] = useState(false);
   const [importErr, setImportErr] = useState("");
 
-  const copyCode = async () => { try { await navigator.clipboard.writeText(exportCode || ""); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch {} };
-  const doImport = () => { const ok = onImport && onImport(importText); if (!ok) { setImportErr("Code ungültig oder leer."); setTimeout(() => setImportErr(""), 2500); } };
+  const copyCode = async () => {
+    try { await navigator.clipboard.writeText(exportCode || ""); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch {}
+  };
+  const doImport = () => {
+    const ok = onImport && onImport(importText);
+    if (!ok) { setImportErr("Code ungültig oder leer."); setTimeout(() => setImportErr(""), 2500); }
+  };
 
   return (
     <div className="screen saves-screen">
@@ -1365,25 +1444,49 @@ function SavesScreen({ saves, mode, currentGame, exportCode, onSave, onLoad, onD
               {s && <div className="save-meta">{s.savedAt} · {s.messages?.length || 0} Szenen</div>}
             </div>
             <div className="save-actions">
-              {mode === "save" && <button className="save-btn load" onClick={() => onSave(i)}>Hier speichern</button>}
-              {mode === "load" && s && <button className="save-btn load" onClick={() => onLoad(i)}>Laden</button>}
-              {s && <button className="save-btn delete" onClick={() => onDelete(i)}>✕</button>}
+              {mode === "save" && (
+                <button className="save-btn load" onClick={() => onSave(i)}>Hier speichern</button>
+              )}
+              {mode === "load" && s && (
+                <button className="save-btn load" onClick={() => onLoad(i)}>Laden</button>
+              )}
+              {s && (
+                <button className="save-btn delete" onClick={() => onDelete(i)}>✕</button>
+              )}
             </div>
           </div>
         ))}
+
+        {/* ── Portabler Spielstand-Code (übersteht Neustarts) ── */}
         <div className="code-box">
           {mode === "save" ? (
-            <><div className="code-label">Dauerhaft sichern: diesen Code kopieren & aufbewahren</div><textarea className="code-area" readOnly value={exportCode || ""} onClick={e => e.target.select()} /><button className="btn-action" style={{ width: "100%", marginTop: 8 }} onClick={copyCode}>{copied ? "✓ Kopiert" : "📋 Code kopieren"}</button><div className="code-hint">Tipp: in einer Notiz an dich selbst speichern. Zum Fortsetzen spaeter unter Laden einfuegen.</div></>
+            <>
+              <div className="code-label">Dauerhaft sichern: diesen Code kopieren & aufbewahren</div>
+              <textarea className="code-area" readOnly value={exportCode || ""} onClick={e => e.target.select()} />
+              <button className="btn-action" style={{ width: "100%", marginTop: 8 }} onClick={copyCode}>
+                {copied ? "✓ Kopiert" : "📋 Code kopieren"}
+              </button>
+              <div className="code-hint">Tipp: in einer Notiz an dich selbst speichern. Zum Fortsetzen spaeter unter Laden einfuegen.</div>
+            </>
           ) : (
-            <><div className="code-label">Spielstand-Code einfügen & laden</div><textarea className="code-area" value={importText} onChange={e => setImportText(e.target.value)} placeholder="Hier deinen gesicherten Code einfügen…" /><button className="btn-action" style={{ width: "100%", marginTop: 8 }} onClick={doImport}>📥 Aus Code laden</button>{importErr && <div className="code-hint" style={{ color: "#e88" }}>{importErr}</div>}</>
+            <>
+              <div className="code-label">Spielstand-Code einfügen & laden</div>
+              <textarea className="code-area" value={importText} onChange={e => setImportText(e.target.value)} placeholder="Hier deinen gesicherten Code einfügen…" />
+              <button className="btn-action" style={{ width: "100%", marginTop: 8 }} onClick={doImport}>📥 Aus Code laden</button>
+              {importErr && <div className="code-hint" style={{ color: "#e88" }}>{importErr}</div>}
+            </>
           )}
         </div>
-        <div style={{ marginTop: 18 }}><button className="btn-action" onClick={onBack}>← Zurück</button></div>
+
+        <div style={{ marginTop: 18 }}>
+          <button className="btn-action" onClick={onBack}>← Zurück</button>
+        </div>
       </div>
     </div>
   );
 }
 
+// ── Character Creation ──
 function CharacterCreation({ onComplete, onBack }) {
   const totalPoints = 27;
   const [attrs, setAttrs] = useState({ STR: 8, DEX: 8, CON: 8, INT: 8, WIS: 8, CHA: 8 });
@@ -1396,52 +1499,137 @@ function CharacterCreation({ onComplete, onBack }) {
   const [appearance, setAppearance] = useState("");
   const [motivation, setMotivation] = useState("");
 
-  const spentPoints = Object.values(attrs).reduce((a, v) => a + (v <= 13 ? v - 8 : (v - 8) + (v - 13)), 0);
+  const spentPoints = Object.values(attrs).reduce((a, v) => {
+    const cost = v <= 13 ? v - 8 : (v - 8) + (v - 13);
+    return a + cost;
+  }, 0);
   const remaining = totalPoints - spentPoints;
-  const canIncrease = (attr) => attrs[attr] < 15 && remaining >= (attrs[attr] >= 13 ? 2 : 1);
-  const changeAttr = (attr, delta) => { const newVal = attrs[attr] + delta; if (newVal >= 8 && newVal <= 15) setAttrs(prev => ({ ...prev, [attr]: newVal })); };
-  const toggleTrait = (t) => setTraits(prev => prev.includes(t) ? prev.filter(x => x !== t) : prev.length < 3 ? [...prev, t] : prev);
+
+  const canIncrease = (attr) => {
+    const v = attrs[attr];
+    if (v >= 15) return false;
+    const addCost = v >= 13 ? 2 : 1;
+    return remaining >= addCost;
+  };
+
+  const changeAttr = (attr, delta) => {
+    const newVal = attrs[attr] + delta;
+    if (newVal < 8 || newVal > 15) return;
+    setAttrs(prev => ({ ...prev, [attr]: newVal }));
+  };
+
+  const toggleTrait = (t) => {
+    setTraits(prev => prev.includes(t) ? prev.filter(x => x !== t) : prev.length < 3 ? [...prev, t] : prev);
+  };
+
   const canFinish = name && race && charClass && background && traits.length > 0;
 
   const handleFinish = () => {
     if (!canFinish) return;
     const derived = calcDerived(attrs, charClass, 1);
-    onComplete({ name, race, class: charClass, background, traits, attrs, backstory, appearance, motivation, derived, currentHP: derived.maxHP, currentMP: derived.maxMP, inventory: [{ name: "Ration", icon: "🍞", qty: 3 }, { name: "Fackeln", icon: "🕯️", qty: 2 }, { name: "Münzbeutel", icon: "💰", qty: 1 }], portraitUrl: null });
+    const char = {
+      name, race, class: charClass, background, traits, attrs, backstory, appearance, motivation,
+      derived,
+      currentHP: derived.maxHP,
+      currentMP: derived.maxMP,
+      inventory: [
+        { name: "Ration", icon: "🍞", qty: 3 },
+        { name: "Fackeln", icon: "🕯️", qty: 2 },
+        { name: "Münzbeutel", icon: "💰", qty: 1 },
+      ],
+      portraitUrl: null, // wird im GameScreen asynchron erzeugt & hier zwischengespeichert
+    };
+    onComplete(char);
   };
 
   return (
     <div className="screen creation-screen">
       <div className="creation-header">✦ Charaktererschaffung ✦</div>
       <div className="creation-body">
-        <div className="creation-section" data-title="Identität"><div className="field-label">Charaktername</div><input className="text-input" value={name} onChange={e => setName(e.target.value)} placeholder="Wie nennen die Sterblichen dich?" maxLength={40} /></div>
-        <div className="creation-section" data-title="Rasse"><div className="grid-3">{RACES.map(r => <div key={r} className={`select-card ${race === r ? "active" : ""}`} onClick={() => setRace(r)}>{r}</div>)}</div></div>
-        <div className="creation-section" data-title="Klasse"><div className="grid-3">{CLASSES.map(c => <div key={c} className={`select-card ${charClass === c ? "active" : ""}`} onClick={() => setCharClass(c)}>{c}</div>)}</div></div>
-        <div className="creation-section" data-title="Herkunft"><div className="grid-3">{BACKGROUNDS.map(b => <div key={b} className={`select-card ${background === b ? "active" : ""}`} onClick={() => setBackground(b)}>{b}</div>)}</div></div>
-        <div className="creation-section" data-title="Persönlichkeitszüge (max. 3)"><div className="flex wrap">{TRAITS.map(t => <div key={t} className={`trait-tag ${traits.includes(t) ? "active" : ""}`} onClick={() => toggleTrait(t)}>{t}</div>)}</div></div>
+
+        {/* Identity */}
+        <div className="creation-section" data-title="Identität">
+          <div className="field-label">Charaktername</div>
+          <input className="text-input" value={name} onChange={e => setName(e.target.value)} placeholder="Wie nennen die Sterblichen dich?" maxLength={40} />
+        </div>
+
+        {/* Race */}
+        <div className="creation-section" data-title="Rasse">
+          <div className="grid-3">
+            {RACES.map(r => <div key={r} className={`select-card ${race === r ? "active" : ""}`} onClick={() => setRace(r)}>{r}</div>)}
+          </div>
+        </div>
+
+        {/* Class */}
+        <div className="creation-section" data-title="Klasse">
+          <div className="grid-3">
+            {CLASSES.map(c => <div key={c} className={`select-card ${charClass === c ? "active" : ""}`} onClick={() => setCharClass(c)}>{c}</div>)}
+          </div>
+        </div>
+
+        {/* Background */}
+        <div className="creation-section" data-title="Herkunft">
+          <div className="grid-3">
+            {BACKGROUNDS.map(b => <div key={b} className={`select-card ${background === b ? "active" : ""}`} onClick={() => setBackground(b)}>{b}</div>)}
+          </div>
+        </div>
+
+        {/* Traits */}
+        <div className="creation-section" data-title="Persönlichkeitszüge (max. 3)">
+          <div className="flex wrap">
+            {TRAITS.map(t => <div key={t} className={`trait-tag ${traits.includes(t) ? "active" : ""}`} onClick={() => toggleTrait(t)}>{t}</div>)}
+          </div>
+        </div>
+
+        {/* Attributes */}
         <div className="creation-section" data-title="Attribute">
           <div className="points-left">Verbleibende Punkte: <span className="text-gold">{remaining}</span></div>
           <div className="attr-grid">
             {Object.entries(attrs).map(([k, v]) => (
               <div key={k} className="attr-card">
-                <span className="attr-icon">{ATTR_ICONS[k]}</span><div className="attr-name">{ATTR_NAMES[k]}</div>
-                <div className="attr-controls"><button className="attr-btn" onClick={() => changeAttr(k, -1)} disabled={v <= 8}>-</button><span className="attr-val">{v}</span><button className="attr-btn" onClick={() => changeAttr(k, 1)} disabled={!canIncrease(k)}>+</button></div>
+                <span className="attr-icon">{ATTR_ICONS[k]}</span>
+                <div className="attr-name">{ATTR_NAMES[k]}</div>
+                <div className="attr-controls">
+                  <button className="attr-btn" onClick={() => changeAttr(k, -1)} disabled={v <= 8}>-</button>
+                  <span className="attr-val">{v}</span>
+                  <button className="attr-btn" onClick={() => changeAttr(k, 1)} disabled={!canIncrease(k)}>+</button>
+                </div>
                 <div className="attr-mod">{modStr(v)}</div>
               </div>
             ))}
           </div>
         </div>
-        <div className="creation-section" data-title="Hintergrundgeschichte"><div className="field-label">Vergangenheit (optional, aber empfohlen)</div><textarea className="textarea-input" value={backstory} onChange={e => setBackstory(e.target.value)} placeholder="Was trieb dich in diese düstere Welt?" rows={4} /></div>
-        <div className="creation-section" data-title="Erscheinung"><div className="field-label">Körperliche Erscheinung</div><textarea className="textarea-input" value={appearance} onChange={e => setAppearance(e.target.value)} placeholder="Aussehen, Kleidung, Narben..." rows={3} /></div>
-        <div className="creation-section" data-title="Motivation"><div className="field-label">Was treibt dich an?</div><input className="text-input" value={motivation} onChange={e => setMotivation(e.target.value)} placeholder="Rache? Macht?" maxLength={120} /></div>
+
+        {/* Backstory */}
+        <div className="creation-section" data-title="Hintergrundgeschichte">
+          <div className="field-label">Vergangenheit (optional, aber empfohlen)</div>
+          <textarea className="textarea-input" value={backstory} onChange={e => setBackstory(e.target.value)} placeholder="Was trieb dich in diese düstere Welt? Welche Narben trägst du mit dir? Wer oder was hat dich geformt?" rows={4} />
+        </div>
+
+        {/* Appearance */}
+        <div className="creation-section" data-title="Erscheinung">
+          <div className="field-label">Körperliche Erscheinung</div>
+          <textarea className="textarea-input" value={appearance} onChange={e => setAppearance(e.target.value)} placeholder="Beschreibe das Äußere deines Charakters – Gesichtszüge, Körperbau, Kleidung, Besonderheiten..." rows={3} />
+        </div>
+
+        {/* Motivation */}
+        <div className="creation-section" data-title="Motivation">
+          <div className="field-label">Was treibt dich an?</div>
+          <input className="text-input" value={motivation} onChange={e => setMotivation(e.target.value)} placeholder="Rache? Macht? Vergessen? Erlösung?" maxLength={120} />
+        </div>
+
       </div>
       <div className="creation-footer">
         <button className="btn-action danger" onClick={onBack}>✕ Abbrechen</button>
-        <button className="btn-action" onClick={handleFinish} disabled={!canFinish}>Charakter erschaffen →</button>
+        <button className="btn-action" onClick={handleFinish} disabled={!canFinish}>
+          Charakter erschaffen →
+        </button>
       </div>
     </div>
   );
 }
 
+// ── Game Screen ──
 function GameScreen({ char: initialChar, messages: initialMsgs, worldState: initialWS, options: initialOptions, gallery: initialGallery, saves, setSaves, onMenu }) {
   const [char, setChar] = useState(initialChar);
   const [messages, setMessages] = useState(initialMsgs);
@@ -1459,12 +1647,16 @@ function GameScreen({ char: initialChar, messages: initialMsgs, worldState: init
   const [showSave, setShowSave] = useState(false);
   const [showPauseMenu, setShowPauseMenu] = useState(false);
   const [showOptions, setShowOptions] = useState(false);
-  const [lightbox, setLightbox] = useState(null);       
-  const [album, setAlbum] = useState(null);              
-  const [showSidebar, setShowSidebar] = useState(false); 
-  const [imgCache, setImgCache] = useState(() => (char?.portraitUrl ? { char: char.portraitUrl } : {})); 
+  const [lightbox, setLightbox] = useState(null);        // { images:[{src,fallbackSvg,title,subtitle}], index, portrait, fit }
+  const [album, setAlbum] = useState(null);              // { title, subtitle, cat, entity, portrait } -> shows all images of an entity
+  const [showSidebar, setShowSidebar] = useState(false); // mobile drawer
+  const [imgCache, setImgCache] = useState(() => (char?.portraitUrl ? { char: char.portraitUrl } : {})); // key -> dataURL/url
+  // GALERIE/ALBUM: alle je erzeugten Bilder, nach Kategorie & Entität gesammelt.
+  //  gallery = { player:[entry], npcs:{[key]:[entry]}, items:{[name]:[entry]}, locations:[entry] }
+  //  entry = { key, src, caption, ts }
   const [gallery, setGallery] = useState(initialGallery || { player: [], npcs: {}, items: {}, locations: [] });
-  const [genBusy, setGenBusy] = useState({});            
+  const [genBusy, setGenBusy] = useState({});            // entity -> bool (für "weiteres Bild")
+  const [imgErr, setImgErr] = useState("");              // erste Bild-Fehlermeldung (Diagnose)
   const sceneIdx = useRef(0);
   const imgCacheRef = useRef(imgCache);
   imgCacheRef.current = imgCache;
@@ -1477,17 +1669,30 @@ function GameScreen({ char: initialChar, messages: initialMsgs, worldState: init
 
   const updateOptions = (o) => { setOptions(o); persistOptions(o); };
 
+  // Append a finished image into the album under the right category/entity (no duplicates).
   const fileInGallery = (cat, entity, entry) => {
     setGallery(g => {
       const ng = { ...g };
-      if (cat === "player") { if (ng.player.some(e => e.key === entry.key)) return g; ng.player = [...ng.player, entry]; } 
-      else if (cat === "location") { if (ng.locations.some(e => e.key === entry.key)) return g; ng.locations = [...ng.locations, entry]; } 
-      else if (cat === "npc") { const arr = ng.npcs[entity] || []; if (arr.some(e => e.key === entry.key)) return g; ng.npcs = { ...ng.npcs, [entity]: [...arr, entry] }; } 
-      else if (cat === "item") { const arr = ng.items[entity] || []; if (arr.some(e => e.key === entry.key)) return g; ng.items = { ...ng.items, [entity]: [...arr, entry] }; }
+      if (cat === "player") {
+        if (ng.player.some(e => e.key === entry.key)) return g;
+        ng.player = [...ng.player, entry];
+      } else if (cat === "location") {
+        if (ng.locations.some(e => e.key === entry.key)) return g;
+        ng.locations = [...ng.locations, entry];
+      } else if (cat === "npc") {
+        const arr = ng.npcs[entity] || [];
+        if (arr.some(e => e.key === entry.key)) return g;
+        ng.npcs = { ...ng.npcs, [entity]: [...arr, entry] };
+      } else if (cat === "item") {
+        const arr = ng.items[entity] || [];
+        if (arr.some(e => e.key === entry.key)) return g;
+        ng.items = { ...ng.items, [entity]: [...arr, entry] };
+      }
       return ng;
     });
   };
 
+  // Async image request with cache + de-dupe. `info` = { seed, cat, entity, caption } for the album.
   const requestImage = (key, prompt, info = {}) => {
     if (!key || !options.imagery) return;
     if (imgCacheRef.current[key] || pendingImg.current.has(key)) return;
@@ -1500,13 +1705,14 @@ function GameScreen({ char: initialChar, messages: initialMsgs, worldState: init
           if (info.cat) fileInGallery(info.cat, info.entity, { key, src, caption: info.caption || "", ts: Date.now() });
         }
       })
-      .catch((err) => { console.warn("Fehler bei Bild: " + key, err); })
+      .catch(e => { setImgErr(prev => prev || (e && e.message ? e.message : String(e))); })
       .finally(() => {
         pendingImg.current.delete(key);
         if (info.entity) setGenBusy(b => ({ ...b, [info.entity]: false }));
       });
   };
 
+  // Generate an ADDITIONAL album image for an entity (different pose/context, same identity).
   const generateMore = (cat, entity, npc, item) => {
     const variation = ["another angle", "full body shot", "different pose", "close-up", "in a new setting"][Math.floor(Math.random() * 5)];
     let p;
@@ -1518,20 +1724,47 @@ function GameScreen({ char: initialChar, messages: initialMsgs, worldState: init
   };
 
   useEffect(() => {
-    if (isFirstRun.current) { isFirstRun.current = false; triggerOpening(); }
-    if (!imgCacheRef.current.char) { const p = charPromptFor(char); requestImage(p.key, p.prompt, p); } 
-    else if (!galleryRef.current.player.length) { fileInGallery("player", "player", { key: "char", src: imgCacheRef.current.char, caption: char.name, ts: Date.now() }); }
+    if (isFirstRun.current) {
+      isFirstRun.current = false;
+      triggerOpening();
+    }
+    // Player portrait
+    if (!imgCacheRef.current.char) {
+      const p = charPromptFor(char);
+      requestImage(p.key, p.prompt, p);
+    } else if (!galleryRef.current.player.length) {
+      // seed gallery from a loaded save
+      fileInGallery("player", "player", { key: "char", src: imgCacheRef.current.char, caption: char.name, ts: Date.now() });
+    }
   }, []);
 
-  useEffect(() => { Object.entries(worldState.npcs || {}).forEach(([k, npc]) => { const p = npcPromptFor(k, npc); requestImage(p.key, p.prompt, p); }); }, [worldState.npcs]);
-  useEffect(() => { if (imgCache.char && char.portraitUrl !== imgCache.char) { setChar(c => ({ ...c, portraitUrl: imgCache.char })); } }, [imgCache.char]);
-  useEffect(() => { if (options.autoScroll && narrative.current) { narrative.current.scrollTop = narrative.current.scrollHeight; } }, [messages, loading]);
+  // NSC-Porträts werden bewusst NICHT automatisch erzeugt (Kostenkontrolle bei Gemini-Bildern).
+  // Ein Porträt entsteht erst, wenn du im NSC-Tab auf eine Figur tippst (öffnet das Album).
 
+  // Persist the generated player portrait back onto the character (for saves).
+  useEffect(() => {
+    if (imgCache.char && char.portraitUrl !== imgCache.char) {
+      setChar(c => ({ ...c, portraitUrl: imgCache.char }));
+    }
+  }, [imgCache.char]);
+
+  useEffect(() => {
+    if (options.autoScroll && narrative.current) {
+      narrative.current.scrollTop = narrative.current.scrollHeight;
+    }
+  }, [messages, loading]);
+
+  // ── Lightbox helpers (a lightbox shows a LIST of images with prev/next) ──
   const openLightboxList = (entries, index, portrait, fit, fallbackSeed, fallbackKind) => {
-    const images = entries.map(e => ({ src: imgCacheRef.current[e.key] || e.src, caption: e.caption, fallbackSvg: fallbackKind === "scene" ? fallbackSceneSvg(mood, e.caption) : fallbackPortraitSvg((fallbackSeed || e.caption || "") + e.key, fallbackKind || "person") }));
+    const images = entries.map(e => ({
+      src: imgCacheRef.current[e.key] || e.src,
+      caption: e.caption,
+      fallbackSvg: fallbackKind === "scene" ? fallbackSceneSvg(mood, e.caption) : fallbackPortraitSvg((fallbackSeed || e.caption || "") + e.key, fallbackKind || "person"),
+    }));
     setLightbox({ images, index: index || 0, portrait, fit });
   };
 
+  // Scene image -> fullscreen (with the whole locations album to swipe through)
   const openSceneLightbox = () => {
     const locs = galleryRef.current.locations;
     const idx = Math.max(0, locs.findIndex(e => e.key === sceneKey));
@@ -1539,9 +1772,20 @@ function GameScreen({ char: initialChar, messages: initialMsgs, worldState: init
     else setLightbox({ images: [{ src: imgCacheRef.current[sceneKey], caption: sceneTitle, fallbackSvg: fallbackSceneSvg(mood, sceneTitle) }], index: 0, portrait: false, fit: "cover" });
   };
 
+  // Open an album (all images of one entity) as a grid modal
   const openCharAlbum = () => { setShowSidebar(false); setAlbum({ title: char.name, subtitle: `${char.race} · ${char.class} · ${char.background}`, cat: "player", entity: "player", portrait: true }); };
-  const openNpcAlbum = (key, npc) => { setShowSidebar(false); const p = npcPromptFor(key, npc); requestImage(p.key, p.prompt, p); setAlbum({ title: npc.name || key, subtitle: npc.description || npc.role || "", cat: "npc", entity: key, npc, portrait: true }); };
-  const openItemAlbum = (item) => { setShowSidebar(false); const p = itemPromptFor(item.name); requestImage(p.key, p.prompt, p); setAlbum({ title: item.name, subtitle: "", cat: "item", entity: item.name, item, portrait: false }); };
+  const openNpcAlbum = (key, npc) => {
+    setShowSidebar(false);
+    const p = npcPromptFor(key, npc);
+    requestImage(p.key, p.prompt, p); // ensure the main portrait exists
+    setAlbum({ title: npc.name || key, subtitle: npc.description || npc.role || "", cat: "npc", entity: key, npc, portrait: true });
+  };
+  const openItemAlbum = (item) => {
+    setShowSidebar(false);
+    const p = itemPromptFor(item.name);
+    requestImage(p.key, p.prompt, p);
+    setAlbum({ title: item.name, subtitle: "", cat: "item", entity: item.name, item, portrait: false });
+  };
 
   const triggerOpening = async () => {
     setLoading(true);
@@ -1549,7 +1793,9 @@ function GameScreen({ char: initialChar, messages: initialMsgs, worldState: init
       const introPrompt = `Das Spiel beginnt. Erschaffe eine packende Eröffnungsszene für ${char.name}, ein${char.race === "Zwerg" || char.race === "Gnome" ? "en" : "e"} ${char.race} ${char.class} mit der Herkunft "${char.background}" und den Eigenschaften: ${char.traits.join(", ")}. Motivation: ${char.motivation || "unbekannt"}. Beginne die Geschichte mit einer atmosphärischen, düsteren Szene die zum Charakter passt. Führe die Welt ein.`;
       const raw = await generateNarratorResponse(char, [], worldState, introPrompt, options);
       processNarratorResponse(raw, introPrompt, true);
-    } catch (e) { appendMessage("system", "Fehler beim Start: " + (e && e.message ? e.message : e)); }
+    } catch (e) {
+      appendMessage("system", "Fehler beim Start: " + (e && e.message ? e.message : e));
+    }
     setLoading(false);
   };
 
@@ -1561,20 +1807,32 @@ function GameScreen({ char: initialChar, messages: initialMsgs, worldState: init
 
     if (meta.roll) {
       newMessages.push({ role: "system", content: `🎲 ${meta.roll.type}: ${meta.roll.result} – ${meta.roll.context}`, type: "roll" });
-      setDiceResult(meta.roll.result); setShowDice(true); setTimeout(() => setShowDice(false), 1500);
+      setDiceResult(meta.roll.result);
+      setShowDice(true);
+      setTimeout(() => setShowDice(false), 1500);
     }
 
     setMessages(prev => [...prev, ...newMessages]);
 
+    // Update world state
     if (meta.worldStateUpdates && Object.keys(meta.worldStateUpdates).length > 0) {
       setWorldState(prev => {
         const ws = { ...prev };
         if (meta.worldStateUpdates.npcs) {
+          // Freeze appearance: once an NPC exists, keep its ORIGINAL description/name so its
+          // look never drifts. Only fill in missing fields; never overwrite the locked ones.
           const merged = { ...ws.npcs };
           Object.entries(meta.worldStateUpdates.npcs).forEach(([k, incoming]) => {
             const existing = merged[k];
-            if (!existing) { merged[k] = { ...incoming }; } 
-            else { merged[k] = { ...incoming, ...existing, role: incoming.role || existing.role }; }
+            if (!existing) {
+              merged[k] = { ...incoming };
+            } else {
+              merged[k] = {
+                ...incoming,
+                ...existing, // existing wins -> description & name stay locked
+                role: incoming.role || existing.role,
+              };
+            }
           });
           ws.npcs = merged;
         }
@@ -1585,6 +1843,7 @@ function GameScreen({ char: initialChar, messages: initialMsgs, worldState: init
       });
     }
 
+    // Update char stats
     setChar(prev => {
       const c = { ...prev };
       if (meta.hpChange) c.currentHP = clamp(c.currentHP + meta.hpChange, 0, c.derived.maxHP);
@@ -1592,9 +1851,14 @@ function GameScreen({ char: initialChar, messages: initialMsgs, worldState: init
       if (meta.xpGain) {
         c.derived = { ...c.derived, xp: c.derived.xp + meta.xpGain };
         if (c.derived.xp >= c.derived.xpNext) {
-          c.derived.level++; c.derived.xp -= c.derived.xpNext; c.derived.xpNext = Math.floor(c.derived.xpNext * 1.5);
+          c.derived.level++;
+          c.derived.xp -= c.derived.xpNext;
+          c.derived.xpNext = Math.floor(c.derived.xpNext * 1.5);
           const nd = calcDerived(c.attrs, c.class, c.derived.level);
-          c.derived.maxHP = nd.maxHP; c.derived.maxMP = nd.maxMP; c.currentHP = nd.maxHP; c.currentMP = nd.maxMP;
+          c.derived.maxHP = nd.maxHP;
+          c.derived.maxMP = nd.maxMP;
+          c.currentHP = nd.maxHP;
+          c.currentMP = nd.maxMP;
         }
       }
       if (meta.newInventoryItems?.length) c.inventory = [...c.inventory, ...meta.newInventoryItems.map(n => ({ name: n, icon: "📦", qty: 1 }))];
@@ -1606,56 +1870,123 @@ function GameScreen({ char: initialChar, messages: initialMsgs, worldState: init
     if (meta.sceneTitle) setSceneTitle(meta.sceneTitle);
     if (meta.sceneVisual) setSceneVisual(meta.sceneVisual);
 
+    // Request the scene image (async); it appears in the background while the player reads.
     if (options.imagery && (meta.sceneTitle || meta.sceneVisual)) {
       sceneIdx.current += 1;
       const p = scenePromptFor(meta.sceneVisual, meta.sceneTitle || "Szene", meta.mood || mood, sceneIdx.current);
-      setSceneKey(p.key); requestImage(p.key, p.prompt, p);
+      setSceneKey(p.key);
+      requestImage(p.key, p.prompt, p);
     }
   };
 
-  const appendMessage = (type, content) => { setMessages(prev => [...prev, { role: type === "system" ? "system" : "assistant", content, type, narration: content }]); };
+  const appendMessage = (type, content) => {
+    setMessages(prev => [...prev, { role: type === "system" ? "system" : "assistant", content, type, narration: content }]);
+  };
 
   const handleSend = async () => {
     const txt = input.trim();
     if (!txt || loading) return;
-    setInput(""); setLoading(true);
+    setInput("");
+    setLoading(true);
     try {
       const history = messages.filter(m => m.role === "user" || m.role === "assistant").map(m => ({ role: m.role, content: m.content }));
       const raw = await generateNarratorResponse(char, history, worldState, txt, options);
       await processNarratorResponse(raw, txt);
-    } catch (e) { appendMessage("system", "Fehler: " + (e && e.message ? e.message : e)); }
-    setLoading(false); setTimeout(() => inputRef.current?.focus(), 100);
+    } catch (e) {
+      appendMessage("system", "Fehler: " + (e && e.message ? e.message : e));
+    }
+    setLoading(false);
+    setTimeout(() => inputRef.current?.focus(), 100);
   };
 
-  const handleKeyDown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } };
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
+  };
 
   const doSave = (slot) => {
     const newSaves = [...saves];
     newSaves[slot] = { char, messages, worldState, gallery, savedAt: now() };
-    setSaves(newSaves); persistSaves(newSaves); setShowSave(false); setShowPauseMenu(false);
+    setSaves(newSaves);          // update root state so menu "Load" button activates
+    persistSaves(newSaves);
+    setShowSave(false);
+    setShowPauseMenu(false);
     appendMessage("system", `✦ Spielstand in Slot ${slot + 1} gespeichert.`);
   };
 
-  const doDelete = (slot) => { const newSaves = [...saves]; newSaves[slot] = null; setSaves(newSaves); persistSaves(newSaves); };
+  const doDelete = (slot) => {
+    const newSaves = [...saves];
+    newSaves[slot] = null;
+    setSaves(newSaves);
+    persistSaves(newSaves);
+  };
 
   const moodClass = { combat: "mood-combat", mystical: "mood-mystical", exploration: "mood-exploration", tavern: "mood-tavern", danger: "mood-danger", neutral: "" }[mood] || "";
   const moodLabel = { combat: "⚔ Kampf", mystical: "✦ Mystisch", exploration: "🗺 Erkundung", tavern: "🍺 Taverne", danger: "⚠ Gefahr", neutral: "· Ruhig" }[mood] || "";
+
   const questLog = messages.filter(m => m.type === "narrator" && m.narration).slice(-20).map((m, i) => ({ text: m.narration?.slice(0, 80) + "...", i }));
   const npcs = Object.entries(worldState.npcs || {});
 
-  if (showSave) return <SavesScreen saves={saves} mode="save" exportCode={encodeSave({ v: 1, char, worldState, gallery, messages: (messages || []).slice(-10) })} onSave={doSave} onLoad={() => {}} onDelete={doDelete} onBack={() => setShowSave(false)} />;
-  if (showOptions) return <OptionsScreen opts={options} onChange={updateOptions} onBack={() => setShowOptions(false)} />;
+  if (showSave) {
+    return <SavesScreen saves={saves} mode="save" exportCode={encodeSave({ v: 1, char, worldState, messages: (messages || []).slice(-2) })} onSave={doSave} onLoad={() => {}} onDelete={doDelete} onBack={() => setShowSave(false)} />;
+  }
+
+  // Ingame settings overlay
+  if (showOptions) {
+    return <OptionsScreen opts={options} onChange={updateOptions} onBack={() => setShowOptions(false)} />;
+  }
 
   return (
     <div className="screen game-screen" style={{ fontSize: options.fontSize + "px" }}>
       <DiceDisplay show={showDice} result={diceResult} />
-      {lightbox && <Lightbox images={lightbox.images} index={lightbox.index} portrait={lightbox.portrait} fit={lightbox.fit} onClose={() => setLightbox(null)} />}
+      {lightbox && (
+        <Lightbox images={lightbox.images} index={lightbox.index} portrait={lightbox.portrait} fit={lightbox.fit} onClose={() => setLightbox(null)} />
+      )}
       {album && (() => {
-        const entries = album.cat === "player" ? gallery.player : album.cat === "npc" ? (gallery.npcs[album.entity] || []) : album.cat === "item" ? (gallery.items[album.entity] || []) : [];
-        const withFallback = entries.map(e => ({ ...e, fallbackSvg: fallbackPortraitSvg((album.title || "") + e.key, album.portrait ? "person" : "item") }));
-        return <AlbumModal title={album.title} subtitle={album.subtitle} entries={withFallback} imgCache={imgCache} portrait={album.portrait} busy={!!genBusy[album.entity]} onOpenImage={(idx) => openLightboxList(withFallback, idx, album.portrait, album.portrait ? "cover" : "contain", album.title, album.portrait ? "person" : "item")} onGenerateMore={() => generateMore(album.cat, album.entity, album.npc, album.item)} onClose={() => setAlbum(null)} />;
+        const entries = album.cat === "player" ? gallery.player
+          : album.cat === "npc" ? (gallery.npcs[album.entity] || [])
+          : album.cat === "item" ? (gallery.items[album.entity] || [])
+          : [];
+        const withFallback = entries.map(e => ({
+          ...e,
+          fallbackSvg: fallbackPortraitSvg((album.title || "") + e.key, album.portrait ? "person" : "item"),
+        }));
+        return (
+          <AlbumModal
+            title={album.title}
+            subtitle={album.subtitle}
+            entries={withFallback}
+            imgCache={imgCache}
+            portrait={album.portrait}
+            busy={!!genBusy[album.entity]}
+            onOpenImage={(idx) => openLightboxList(withFallback, idx, album.portrait, album.portrait ? "cover" : "contain", album.title, album.portrait ? "person" : "item")}
+            onGenerateMore={() => generateMore(album.cat, album.entity, album.npc, album.item)}
+            onClose={() => setAlbum(null)}
+          />
+        );
       })()}
 
+      {/* ── PAUSE MENU MODAL ── */}
+      {showPauseMenu && (
+        <div className="modal-overlay" onClick={() => setShowPauseMenu(false)}>
+          <div className="modal-box" style={{ width: "min(360px,92vw)", textAlign: "center" }} onClick={e => e.stopPropagation()}>
+            <div className="modal-title" style={{ marginBottom: 24 }}>⏸ Pause</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <button className="btn-menu" onClick={() => setShowPauseMenu(false)}>▶ Weiterspielen</button>
+              <button className="btn-menu" onClick={() => { setShowPauseMenu(false); setShowSave(true); }}>💾 Spielstand speichern</button>
+              <button className="btn-menu" onClick={() => { setShowPauseMenu(false); setShowOptions(true); }}>⚙ Einstellungen</button>
+              <button className="btn-menu danger"
+                onClick={() => { if (window.confirm("Zurück zum Hauptmenü? Ungespeicherter Fortschritt geht verloren.")) onMenu(); }}>
+                ✕ Hauptmenü
+              </button>
+            </div>
+            <div style={{ marginTop: 16, fontSize: 11, color: "var(--smoke)", fontFamily: "'Cinzel',serif", letterSpacing: "0.1em" }}>
+              Klicke außerhalb um fortzufahren
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SIDEBAR (drawer on mobile) */}
       <div className={`sidebar-backdrop ${showSidebar ? "show" : ""}`} onClick={() => setShowSidebar(false)} />
       <div className={`sidebar ${showSidebar ? "open" : ""}`}>
         <div className="sidebar-close-mobile" onClick={() => setShowSidebar(false)}>✕</div>
@@ -1668,12 +1999,30 @@ function GameScreen({ char: initialChar, messages: initialMsgs, worldState: init
           <div className="char-class-sidebar">{char.race} · {char.class} · Lv.{char.derived?.level || 1}</div>
         </div>
         <div className="stat-bars">
-          <div className="stat-bar-row"><span className="stat-bar-label">LP</span><div className="stat-bar-track"><div className="stat-bar-fill hp" style={{ width: `${(char.currentHP / char.derived.maxHP) * 100}%` }} /></div><span className="stat-bar-val">{char.currentHP}/{char.derived.maxHP}</span></div>
-          <div className="stat-bar-row"><span className="stat-bar-label">MP</span><div className="stat-bar-track"><div className="stat-bar-fill mp" style={{ width: `${(char.currentMP / char.derived.maxMP) * 100}%` }} /></div><span className="stat-bar-val">{char.currentMP}/{char.derived.maxMP}</span></div>
-          <div className="stat-bar-row"><span className="stat-bar-label">EP</span><div className="stat-bar-track"><div className="stat-bar-fill xp" style={{ width: `${(char.derived.xp / char.derived.xpNext) * 100}%` }} /></div><span className="stat-bar-val">{char.derived.xp}/{char.derived.xpNext}</span></div>
+          <div className="stat-bar-row">
+            <span className="stat-bar-label">LP</span>
+            <div className="stat-bar-track"><div className="stat-bar-fill hp" style={{ width: `${(char.currentHP / char.derived.maxHP) * 100}%` }} /></div>
+            <span className="stat-bar-val">{char.currentHP}/{char.derived.maxHP}</span>
+          </div>
+          <div className="stat-bar-row">
+            <span className="stat-bar-label">MP</span>
+            <div className="stat-bar-track"><div className="stat-bar-fill mp" style={{ width: `${(char.currentMP / char.derived.maxMP) * 100}%` }} /></div>
+            <span className="stat-bar-val">{char.currentMP}/{char.derived.maxMP}</span>
+          </div>
+          <div className="stat-bar-row">
+            <span className="stat-bar-label">EP</span>
+            <div className="stat-bar-track"><div className="stat-bar-fill xp" style={{ width: `${(char.derived.xp / char.derived.xpNext) * 100}%` }} /></div>
+            <span className="stat-bar-val">{char.derived.xp}/{char.derived.xpNext}</span>
+          </div>
         </div>
         <div className="sidebar-attrs">
-          {Object.entries(char.attrs).map(([k, v]) => <div key={k} className="mini-attr"><div className="mini-attr-icon">{ATTR_ICONS[k]}</div><div className="mini-attr-val">{v}</div><div className="mini-attr-key">{k}</div></div>)}
+          {Object.entries(char.attrs).map(([k, v]) => (
+            <div key={k} className="mini-attr">
+              <div className="mini-attr-icon">{ATTR_ICONS[k]}</div>
+              <div className="mini-attr-val">{v}</div>
+              <div className="mini-attr-key">{k}</div>
+            </div>
+          ))}
         </div>
         <div className="sidebar-tabs">
           <button className={`tab-btn ${sidebarTab === "log" ? "active" : ""}`} onClick={() => setSidebarTab("log")}>Log</button>
@@ -1683,23 +2032,44 @@ function GameScreen({ char: initialChar, messages: initialMsgs, worldState: init
         </div>
         <div className="sidebar-tab-content">
           {sidebarTab === "log" && questLog.map((e, i) => <div key={i} className="log-entry">{e.text}</div>)}
-          {sidebarTab === "npcs" && (npcs.length === 0 ? <div style={{ color: "var(--smoke)", fontStyle: "italic", fontFamily: "'IM Fell English',serif", fontSize: "13px", padding: "8px 0" }}>Noch keine Begegnungen...</div> : npcs.map(([k, v]) => (
-            <div key={k} className="npc-entry" onClick={() => openNpcAlbum(k, v)} title="Bilder & Infos ansehen">
-              <div className="npc-portrait-thumb"><FantasyImage url={imgCache["npc:" + k]} fallbackSvg={fallbackPortraitSvg((v.name || k) + (v.description || ""), "person")} fit="cover" withSpinner={false} /></div>
-              <div className="npc-entry-text"><div className="npc-name">{v.name || k}{(gallery.npcs[k]?.length || 0) > 1 ? ` · ${gallery.npcs[k].length} Bilder` : ""}</div><div className="npc-desc">{v.description || v.role || "Mysteriöse Gestalt"}</div></div>
-            </div>
-          )))}
+          {sidebarTab === "npcs" && (
+            npcs.length === 0
+              ? <div style={{ color: "var(--smoke)", fontStyle: "italic", fontFamily: "'IM Fell English',serif", fontSize: "13px", padding: "8px 0" }}>Noch keine Begegnungen...</div>
+              : npcs.map(([k, v]) => (
+                  <div key={k} className="npc-entry" onClick={() => openNpcAlbum(k, v)} title="Bilder & Infos ansehen">
+                    <div className="npc-portrait-thumb">
+                      <FantasyImage url={imgCache["npc:" + k]} fallbackSvg={fallbackPortraitSvg((v.name || k) + (v.description || ""), "person")} fit="cover" withSpinner={false} />
+                    </div>
+                    <div className="npc-entry-text">
+                      <div className="npc-name">{v.name || k}{(gallery.npcs[k]?.length || 0) > 1 ? ` · ${gallery.npcs[k].length} Bilder` : ""}</div>
+                      <div className="npc-desc">{v.description || v.role || "Mysteriöse Gestalt"}</div>
+                    </div>
+                  </div>
+                ))
+          )}
           {sidebarTab === "inv" && char.inventory.map((item, i) => (
-            <div key={i} className="inv-item" onClick={() => openItemAlbum(item)} title="Gegenstand ansehen"><span className="inv-icon">{item.icon || "📦"}</span><span className="inv-name">{item.name}</span><span className="inv-qty">x{item.qty || 1}</span></div>
-          ))}
-          {sidebarTab === "loc" && (gallery.locations.length === 0 ? <div style={{ color: "var(--smoke)", fontStyle: "italic", fontFamily: "'IM Fell English',serif", fontSize: "13px", padding: "8px 0" }}>Noch keine Orte erkundet...</div> : <div className="loc-grid">{gallery.locations.map((e, idx) => (
-            <div key={e.key} className="loc-thumb" onClick={() => { setShowSidebar(false); openLightboxList(gallery.locations.map(x => ({ ...x, fallbackSvg: fallbackSceneSvg(mood, x.caption) })), idx, false, "cover", null, "scene"); }}>
-              <FantasyImage url={imgCache[e.key] || e.src} fallbackSvg={fallbackSceneSvg(mood, e.caption)} fit="cover" withSpinner={false} /><div className="loc-thumb-label">{e.caption}</div>
+            <div key={i} className="inv-item" onClick={() => openItemAlbum(item)} title="Gegenstand ansehen">
+              <span className="inv-icon">{item.icon || "📦"}</span>
+              <span className="inv-name">{item.name}</span>
+              <span className="inv-qty">x{item.qty || 1}</span>
             </div>
-          ))}</div>)}
+          ))}
+          {sidebarTab === "loc" && (
+            gallery.locations.length === 0
+              ? <div style={{ color: "var(--smoke)", fontStyle: "italic", fontFamily: "'IM Fell English',serif", fontSize: "13px", padding: "8px 0" }}>Noch keine Orte erkundet...</div>
+              : <div className="loc-grid">
+                  {gallery.locations.map((e, idx) => (
+                    <div key={e.key} className="loc-thumb" onClick={() => { setShowSidebar(false); openLightboxList(gallery.locations.map(x => ({ ...x, fallbackSvg: fallbackSceneSvg(mood, x.caption) })), idx, false, "cover", null, "scene"); }}>
+                      <FantasyImage url={imgCache[e.key] || e.src} fallbackSvg={fallbackSceneSvg(mood, e.caption)} fit="cover" withSpinner={false} />
+                      <div className="loc-thumb-label">{e.caption}</div>
+                    </div>
+                  ))}
+                </div>
+          )}
         </div>
       </div>
 
+      {/* MAIN GAME AREA */}
       <div className="game-main">
         <div className="game-topbar">
           <button className="topbar-menu-btn" onClick={() => setShowSidebar(true)} title="Charakter, NSC & Inventar">☰</button>
@@ -1709,16 +2079,26 @@ function GameScreen({ char: initialChar, messages: initialMsgs, worldState: init
           <button className="topbar-btn" onClick={() => setShowPauseMenu(true)}>≡ Pause</button>
         </div>
 
+        {/* Scene Image */}
         <div className={`scene-image-area ${sceneKey ? "clickable-img" : ""}`} onClick={sceneKey ? openSceneLightbox : undefined}>
-          {sceneKey ? <FantasyImage url={imgCache[sceneKey]} fallbackSvg={fallbackSceneSvg(mood, sceneTitle)} fit="cover" withSpinner={true} /> : <div className="scene-loading"><div className="rune-spin">᛫</div>Die Welt nimmt Gestalt an...</div>}
+          {sceneKey
+            ? <FantasyImage url={imgCache[sceneKey]} fallbackSvg={fallbackSceneSvg(mood, sceneTitle)} fit="cover" withSpinner={true} />
+            : <div className="scene-loading"><div className="rune-spin">᛫</div>Die Welt nimmt Gestalt an...</div>}
           <div className="scene-image-overlay" />
           {sceneTitle && <div className="scene-title-overlay">{sceneTitle}</div>}
           {sceneKey && <div className="zoom-badge">⛶</div>}
         </div>
 
+        {imgErr && <div style={{ padding: "5px 12px", fontSize: 11, color: "var(--ember)", fontFamily: "var(--font-body)", textAlign: "center", background: "rgba(139,0,0,0.12)", borderBottom: "1px solid rgba(255,107,53,0.25)" }}>Bilder konnten nicht erzeugt werden: {imgErr}</div>}
+
+        {/* Narrative */}
         <div className="narrative-area" ref={narrative}>
           {messages.map((msg, i) => {
-            if (msg.type === "narrator") return <div key={i} className="narrative-msg narr-narrator">{(msg.narration || "").split(/\n{2,}/).map((para, j) => <p key={j} style={{ margin: j === 0 ? 0 : "0.7em 0 0" }}>{para}</p>)}</div>;
+            if (msg.type === "narrator") return (
+              <div key={i} className="narrative-msg narr-narrator">
+                {(msg.narration || "").split(/\n{2,}/).map((para, j) => <p key={j} style={{ margin: j === 0 ? 0 : "0.7em 0 0" }}>{para}</p>)}
+              </div>
+            );
             if (msg.type === "player") return <div key={i} className="narrative-msg narr-player">Du: {msg.content}</div>;
             if (msg.type === "system") return <div key={i} className="narrative-msg narr-system">{msg.content}</div>;
             if (msg.type === "roll") return <div key={i} className="narrative-msg narr-roll">{msg.content}</div>;
@@ -1727,17 +2107,32 @@ function GameScreen({ char: initialChar, messages: initialMsgs, worldState: init
           {loading && <div className="thinking-dots"><span /><span /><span /></div>}
         </div>
 
+        {/* Input */}
         <div className="input-area">
-          <textarea ref={inputRef} className="game-input" value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown} placeholder="Was tust du? Was sagst du? Was denkst du?" rows={2} disabled={loading} />
-          <button className="send-btn" onClick={handleSend} disabled={loading || !input.trim()}>{loading ? "⟳" : "→"}</button>
+          <textarea
+            ref={inputRef}
+            className="game-input"
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Was tust du? Was sagst du? Was denkst du?"
+            rows={2}
+            disabled={loading}
+          />
+          <button className="send-btn" onClick={handleSend} disabled={loading || !input.trim()}>
+            {loading ? "⟳" : "→"}
+          </button>
         </div>
       </div>
     </div>
   );
 }
 
+// ═══════════════════════════════════════════════════
+// ROOT APP
+// ═══════════════════════════════════════════════════
 function App() {
-  const [screen, setScreen] = useState("menu");
+  const [screen, setScreen] = useState("menu"); // menu | creation | game | options | saves-load
   const [char, setChar] = useState(null);
   const [messages, setMessages] = useState([]);
   const [worldState, setWorldState] = useState(null);
@@ -1758,7 +2153,12 @@ function App() {
     setScreen("game");
   };
 
-  const handleDeleteSave = (slot) => { const ns = [...saves]; ns[slot] = null; setSaves(ns); persistSaves(ns); };
+  const handleDeleteSave = (slot) => {
+    const ns = [...saves];
+    ns[slot] = null;
+    setSaves(ns);
+    persistSaves(ns);
+  };
 
   const handleImport = (code) => {
     const s = decodeSave(code);
@@ -1775,16 +2175,54 @@ function App() {
     <>
       <style>{CSS}</style>
       <div className="app">
-        {screen === "menu" && <MainMenu hasSave={hasSave} onNew={() => setScreen("creation")} onLoad={() => setScreen("saves-load")} onOptions={() => setScreen("options")} />}
-        {screen === "options" && <OptionsScreen opts={options} onChange={handleOptions} onBack={() => setScreen("menu")} />}
-        {screen === "saves-load" && <SavesScreen saves={saves} mode="load" onSave={() => {}} onLoad={handleLoad} onDelete={handleDeleteSave} onImport={handleImport} onBack={() => setScreen("menu")} />}
-        {screen === "creation" && <CharacterCreation onComplete={(c) => { setChar(c); setMessages([]); setWorldState(null); setGallery(null); setScreen("game"); }} onBack={() => setScreen("menu")} />}
-        {screen === "game" && char && <GameScreen char={char} messages={messages} worldState={worldState} options={options} gallery={gallery} saves={saves} setSaves={setSaves} onMenu={() => setScreen("menu")} />}
+        {screen === "menu" && (
+          <MainMenu
+            hasSave={hasSave}
+            onNew={() => setScreen("creation")}
+            onLoad={() => setScreen("saves-load")}
+            onOptions={() => setScreen("options")}
+          />
+        )}
+        {screen === "options" && (
+          <OptionsScreen opts={options} onChange={handleOptions} onBack={() => setScreen("menu")} />
+        )}
+        {screen === "saves-load" && (
+          <SavesScreen
+            saves={saves}
+            mode="load"
+            onSave={() => {}}
+            onLoad={handleLoad}
+            onDelete={handleDeleteSave}
+            onImport={handleImport}
+            onBack={() => setScreen("menu")}
+          />
+        )}
+        {screen === "creation" && (
+          <CharacterCreation
+            onComplete={(c) => { setChar(c); setMessages([]); setWorldState(null); setGallery(null); setScreen("game"); }}
+            onBack={() => setScreen("menu")}
+          />
+        )}
+        {screen === "game" && char && (
+          <GameScreen
+            char={char}
+            messages={messages}
+            worldState={worldState}
+            options={options}
+            gallery={gallery}
+            saves={saves}
+            setSaves={setSaves}
+            onMenu={() => setScreen("menu")}
+          />
+        )}
       </div>
     </>
   );
 }
 
+// ===================================================
+// API-KEY GATE (Standalone-Wrapper)
+// ===================================================
 function AppWrapper() {
   const [apiKey, setApiKey] = useState(() => { try { return localStorage.getItem("df_gemini_key") || ""; } catch (e) { return ""; } });
   const [draft, setDraft] = useState("");
@@ -1812,7 +2250,8 @@ function AppWrapper() {
             Diese eigenstaendige Fassung nutzt deinen eigenen KI-Schluessel von Google, um Erzaehlung und Bilder zu erzeugen. Der Schluessel bleibt nur auf deinem Geraet gespeichert.
           </p>
           <p style={{ color: "var(--smoke-light)", fontSize: 13, marginBottom: 16, fontFamily: "var(--font-prose)" }}>
-            Kostenlosen Schluessel holen bei <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" style={{ color: "var(--teal-bright)" }}>Google AI Studio</a>, dann hier einfuegen:
+            Kostenlosen Schluessel holen bei{" "}
+            <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" style={{ color: "var(--teal-bright)" }}>Google AI Studio</a>, dann hier einfuegen:
           </p>
           <input className="text-input" type="password" value={draft} onChange={e => setDraft(e.target.value)} placeholder="AIza..." style={{ textAlign: "center", fontFamily: "monospace", marginBottom: 16 }} onKeyDown={e => { if (e.key === "Enter") start(); }} />
           <button className="btn-action" style={{ width: "100%" }} disabled={!draft.trim()} onClick={start}>Spiel starten</button>
@@ -1824,9 +2263,7 @@ function AppWrapper() {
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(<AppWrapper />);
+
 </script>
 </body>
 </html>
-
-
-```
