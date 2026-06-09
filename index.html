@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#110d0f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Aschenpfad RPG</title>
+  
+  <!-- React & Babel laden -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@400;700;900&family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&display=swap');
+    
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --blood: #8B0000; --blood-bright: #c0392b; --gold: #c9a84c; --gold-dim: #7a6030;
+      --shadow: #0a0608; --dark: #110d0f; --dark2: #1a1215; --dark3: #241820;
+      --parchment: #e8dcc8; --parchment-dim: #c4b594; --smoke: #6b5b6e; --smoke-light: #9b8a9e;
+      --ember: #ff6b35; --teal: #2a6b7c; --teal-bright: #4a9bac;
+      --font-title: 'Cinzel Decorative', serif; --font-body: 'Cinzel', serif; --font-prose: 'IM Fell English', serif;
+    }
+    html, body, #root { height: 100%; overflow: hidden; background: var(--dark); }
+    body { color: var(--parchment); font-family: var(--font-prose); font-size: 16px; line-height: 1.6; -webkit-tap-highlight-color: transparent; }
+    
+    .app { height: 100%; display: flex; flex-direction: column; background: radial-gradient(ellipse at 50% 0%, #2a0a1a 0%, var(--shadow) 70%); position: relative; overflow: hidden; }
+    .app::before { content: ''; position: fixed; inset: 0; background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E"); pointer-events: none; z-index: 0; opacity: 0.4; }
+
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: var(--dark); }
+    ::-webkit-scrollbar-thumb { background: var(--blood); border-radius: 3px; }
+
+    .screen { position: relative; z-index: 1; height: 100%; overflow: hidden; display: flex; flex-direction: column; }
+
+    /* ── MENUS & SCREENS ── */
+    .menu-screen { align-items: center; justify-content: center; gap: 0; background: radial-gradient(ellipse at 50% 30%, #1a0a12 0%, var(--shadow) 80%); }
+    .menu-title-wrap { text-align: center; margin-bottom: 40px; }
+    .menu-title { font-family: var(--font-title); font-size: clamp(28px, 5vw, 58px); color: var(--gold); text-shadow: 0 0 40px rgba(201,168,76,0.5), 0 2px 0 #000; letter-spacing: 0.05em; line-height: 1.15; animation: titleFlicker 6s ease-in-out infinite; }
+    .menu-subtitle { font-family: var(--font-body); font-size: clamp(11px, 1.5vw, 15px); color: var(--smoke-light); letter-spacing: 0.3em; text-transform: uppercase; margin-top: 8px; }
+    .menu-sep { width: 220px; height: 1px; background: linear-gradient(90deg, transparent, var(--gold), transparent); margin: 16px auto; animation: pulse 3s ease-in-out infinite; }
+    @keyframes titleFlicker { 0%,100% { opacity: 1; text-shadow: 0 0 40px rgba(201,168,76,0.5), 0 2px 0 #000; } 45% { opacity: 0.97; text-shadow: 0 0 60px rgba(201,168,76,0.7), 0 2px 0 #000; } 47% { opacity: 0.9; text-shadow: 0 0 20px rgba(201,168,76,0.3); } 49% { opacity: 0.97; text-shadow: 0 0 60px rgba(201,168,76,0.7); } }
+    @keyframes pulse { 0%,100% { opacity: 0.5; } 50% { opacity: 1; } }
+    
+    .menu-buttons { display: flex; flex-direction: column; gap: 12px; width: min(340px, 90vw); }
+    .btn-menu { font-family: var(--font-body); font-size: 15px; letter-spacing: 0.15em; text-transform: uppercase; padding: 14px 28px; background: transparent; border: 1px solid var(--gold-dim); color: var(--parchment-dim); cursor: pointer; transition: all 0.2s; position: relative; overflow: hidden; }
+    .btn-menu::before { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgba(201,168,76,0.08), transparent); transform: translateX(-100%); transition: transform 0.4s; }
+    .btn-menu:hover::before { transform: translateX(100%); }
+    .btn-menu:hover { border-color: var(--gold); color: var(--gold); box-shadow: 0 0 20px rgba(201,168,76,0.15); }
+    .btn-menu.primary { border-color: var(--blood); color: var(--parchment); background: rgba(139,0,0,0.15); }
+    .btn-menu.primary:hover { background: rgba(139,0,0,0.3); border-color: var(--blood-bright); color: #fff; box-shadow: 0 0 30px rgba(139,0,0,0.3); }
+    .btn-menu.danger { border-color: var(--blood) !important; color: #e88 !important; }
+    .btn-menu.danger:hover { background: rgba(139,0,0,0.2) !important; border-color: var(--blood-bright) !important; }
+    .btn-menu:disabled { opacity: 0.4; cursor: not-allowed; }
+    .menu-version { font-family: var(--font-body); font-size: 11px; color: var(--smoke); margin-top: 32px; letter-spacing: 0.2em; text-align: center; }
+
+    /* ── UI COMPONENTS ── */
+    .text-input, .textarea-input { width: 100%; background: rgba(0,0,0,0.4); border: 1px solid rgba(201,168,76,0.2); color: var(--parchment); font-family: var(--font-prose); font-size: 15px; padding: 10px 14px; outline: none; transition: border-color 0.2s; resize: none; }
+    .text-input:focus, .textarea-input:focus { border-color: var(--gold-dim); }
+    .btn-action { font-family: var(--font-body); font-size: 13px; letter-spacing: 0.12em; text-transform: uppercase; padding: 12px 24px; cursor: pointer; border: 1px solid var(--gold-dim); background: rgba(201,168,76,0.08); color: var(--gold); transition: all 0.2s; }
+    .btn-action:hover:not(:disabled) { background: rgba(201,168,76,0.18); border-color: var(--gold); }
+    .btn-action.danger { border-color: var(--blood); color: #e88; background: rgba(139,0,0,0.08); }
+    .btn-action.danger:hover { background: rgba(139,0,0,0.18); border-color: var(--blood-bright); }
+    .btn-action:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ── CREATION ── */
+    .creation-header { font-family: var(--font-title); font-size: clamp(18px, 3vw, 26px); color: var(--gold); text-align: center; padding: 16px; border-bottom: 1px solid rgba(201,168,76,0.2); flex-shrink: 0; background: rgba(0,0,0,0.3); }
+    .creation-body { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 24px; max-width: 900px; margin: 0 auto; width: 100%; }
+    .creation-section { border: 1px solid rgba(201,168,76,0.15); background: rgba(0,0,0,0.25); padding: 16px; position: relative; }
+    .creation-section::before { content: attr(data-title); font-family: var(--font-body); font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--gold-dim); position: absolute; top: -8px; left: 16px; background: var(--dark); padding: 0 8px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    @media(max-width: 600px) { .grid-3 { grid-template-columns: repeat(2,1fr); } }
+    .select-card { padding: 10px; border: 1px solid rgba(201,168,76,0.15); background: rgba(0,0,0,0.2); color: var(--parchment-dim); font-family: var(--font-body); font-size: 13px; cursor: pointer; text-align: center; }
+    .select-card.active { border-color: var(--gold); color: var(--gold); background: rgba(201,168,76,0.1); }
+    .field-label { font-family: var(--font-body); font-size: 11px; letter-spacing: 0.15em; color: var(--smoke-light); text-transform: uppercase; margin-bottom: 6px; }
+    .attr-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    @media(max-width: 500px) { .attr-grid { grid-template-columns: repeat(2,1fr); } }
+    .attr-card { background: rgba(0,0,0,0.3); border: 1px solid rgba(201,168,76,0.15); padding: 10px; text-align: center; }
+    .attr-icon { font-size: 20px; display: block; margin-bottom: 2px; }
+    .attr-name { font-family: var(--font-body); font-size: 10px; color: var(--smoke-light); text-transform: uppercase; }
+    .attr-controls { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 6px; }
+    .attr-btn { background: none; border: 1px solid rgba(201,168,76,0.3); color: var(--gold); width: 24px; height: 24px; font-family: var(--font-body); }
+    .attr-val { font-family: var(--font-title); font-size: 20px; color: var(--gold); min-width: 28px; }
+    .points-left { font-family: var(--font-body); font-size: 13px; color: var(--gold); text-align: right; margin-bottom: 8px; }
+    .trait-tag { padding: 6px 10px; border: 1px solid rgba(107,91,110,0.4); background: rgba(0,0,0,0.2); color: var(--smoke-light); font-family: var(--font-body); font-size: 11px; display: inline-block; margin: 3px; }
+    .trait-tag.active { border-color: var(--blood); color: #e88; background: rgba(139,0,0,0.1); }
+    .creation-footer { padding: 12px 20px; border-top: 1px solid rgba(201,168,76,0.15); display: flex; justify-content: space-between; background: rgba(0,0,0,0.3); flex-shrink: 0; }
+
+    /* ── GAME & SIDEBAR ── */
+    .game-screen { flex-direction: row; height: 100%; overflow: hidden; }
+    .sidebar { width: 260px; flex-shrink: 0; background: rgba(0,0,0,0.5); border-right: 1px solid rgba(201,168,76,0.1); display: flex; flex-direction: column; overflow: hidden; }
+    @media(max-width: 700px) {
+      .sidebar { position: fixed; top: 0; left: 0; bottom: 0; width: min(300px, 85vw); z-index: 400; transform: translateX(-100%); transition: transform 0.28s ease; background: var(--dark2); box-shadow: 4px 0 30px rgba(0,0,0,0.7); }
+      .sidebar.open { transform: translateX(0); }
+    }
+    .sidebar-backdrop { display: none; }
+    @media(max-width: 700px) { .sidebar-backdrop.show { display: block; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 390; } }
+    .sidebar-close-mobile { display: none; }
+    @media(max-width: 700px) { .sidebar-close-mobile { display: flex; align-items: center; justify-content: center; position: absolute; top: 8px; right: 8px; width: 32px; height: 32px; background: rgba(0,0,0,0.5); border: 1px solid var(--gold-dim); color: var(--gold); font-size: 16px; z-index: 5; } }
+    
+    .sidebar-char-header { padding: 16px; border-bottom: 1px solid rgba(201,168,76,0.1); background: rgba(0,0,0,0.3); }
+    .char-portrait-wrap { width: 80px; height: 80px; border: 2px solid var(--gold-dim); margin: 0 auto 10px; overflow: hidden; background: var(--dark3); position: relative; }
+    .char-name-sidebar { font-family: var(--font-body); font-size: 14px; color: var(--gold); text-align: center; font-weight: 600; }
+    .char-class-sidebar { font-family: var(--font-body); font-size: 11px; color: var(--smoke-light); text-align: center; letter-spacing: 0.1em; }
+    .stat-bars { padding: 12px; border-bottom: 1px solid rgba(201,168,76,0.08); }
+    .stat-bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .stat-bar-label { font-family: var(--font-body); font-size: 10px; color: var(--smoke-light); width: 24px; }
+    .stat-bar-track { flex: 1; height: 6px; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.05); }
+    .stat-bar-fill { height: 100%; transition: width 0.5s; }
+    .stat-bar-fill.hp { background: linear-gradient(90deg, var(--blood), var(--blood-bright)); }
+    .stat-bar-fill.mp { background: linear-gradient(90deg, #1a3a8a, #4a7af0); }
+    .stat-bar-fill.xp { background: linear-gradient(90deg, var(--gold-dim), var(--gold)); }
+    .stat-bar-val { font-family: var(--font-body); font-size: 10px; color: var(--smoke-light); min-width: 36px; text-align: right; }
+    
+    .sidebar-tabs { display: flex; border-bottom: 1px solid rgba(201,168,76,0.1); flex-shrink: 0; }
+    .tab-btn { flex: 1; padding: 8px 4px; background: none; border: none; color: var(--smoke); font-family: var(--font-body); font-size: 10px; border-bottom: 2px solid transparent; }
+    .tab-btn.active { color: var(--gold); border-bottom-color: var(--gold); }
+    .sidebar-tab-content { flex: 1; overflow-y: auto; padding: 12px; }
+    .log-entry { font-family: var(--font-prose); font-size: 12px; color: var(--parchment-dim); padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-style: italic; }
+    .inv-item { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
+    .inv-icon { font-size: 16px; }
+    .inv-name { font-family: var(--font-body); font-size: 12px; color: var(--parchment-dim); flex: 1; }
+    .inv-qty { font-family: var(--font-body); font-size: 11px; color: var(--gold-dim); }
+
+    .game-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+    .game-topbar { display: flex; align-items: center; padding: 8px 12px; border-bottom: 1px solid rgba(201,168,76,0.1); background: rgba(0,0,0,0.4); gap: 8px; flex-shrink: 0; }
+    .topbar-menu-btn { display: none; }
+    @media(max-width: 700px) { .topbar-menu-btn { display: flex; align-items: center; justify-content: center; background: rgba(201,168,76,0.08); border: 1px solid var(--gold-dim); color: var(--gold); font-size: 16px; width: 32px; height: 32px; flex-shrink: 0; } }
+    .topbar-title { font-family: var(--font-body); font-size: 12px; color: var(--gold); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .topbar-btn { background: none; border: 1px solid rgba(201,168,76,0.2); color: var(--smoke-light); font-family: var(--font-body); font-size: 10px; padding: 4px 8px; text-transform: uppercase; }
+    
+    .scene-image-area { width: 100%; height: 200px; flex-shrink: 0; background: var(--dark); overflow: hidden; position: relative; border-bottom: 1px solid rgba(201,168,76,0.1); }
+    @media(max-width: 500px) { .scene-image-area { height: 160px; } }
+    .scene-image-overlay { position: absolute; bottom: 0; left: 0; right: 0; height: 60px; background: linear-gradient(to bottom, transparent, var(--shadow)); pointer-events: none; }
+    .scene-loading { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, var(--dark2), var(--dark3)); color: var(--smoke); font-family: var(--font-prose); font-style: italic; font-size: 12px; flex-direction: column; gap: 8px; }
+    
+    .narrative-area { flex: 1; overflow-y: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }
+    .narr-narrator { font-family: var(--font-prose); font-size: 16px; line-height: 1.7; color: var(--parchment); font-style: italic; border-left: 2px solid var(--blood); padding-left: 12px; }
+    .narr-player { font-family: var(--font-body); font-size: 13px; color: var(--teal-bright); padding: 8px 12px; background: rgba(42,107,124,0.08); border: 1px solid rgba(42,107,124,0.2); align-self: flex-end; max-width: 85%; }
+    .narr-system { font-family: var(--font-body); font-size: 11px; color: var(--gold-dim); text-align: center; }
+    .narr-roll { font-family: var(--font-body); font-size: 12px; color: var(--ember); text-align: center; }
+
+    .input-area { padding: 10px; border-top: 1px solid rgba(201,168,76,0.1); display: flex; gap: 8px; align-items: flex-end; background: rgba(0,0,0,0.3); flex-shrink: 0; }
+    .game-input { flex: 1; min-height: 44px; max-height: 100px; padding: 10px; font-size: 14px; }
+    .send-btn { background: rgba(139,0,0,0.3); border: 1px solid var(--blood); color: var(--parchment); padding: 0 16px; height: 44px; font-family: var(--font-body); font-size: 16px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+
+    /* ── MODALS / OVERLAYS ── */
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 500; display: flex; align-items: center; justify-content: center; padding: 16px; }
+    .modal-box { background: var(--dark2); border: 1px solid var(--gold-dim); padding: 20px; width: min(400px, 100%); max-height: 90vh; overflow-y: auto; text-align: center; }
+    
+    .saves-panel { width: min(500px, 95vw); background: var(--dark2); border: 1px solid rgba(201,168,76,0.2); padding: 24px; max-height: 90vh; overflow-y: auto; margin: auto; }
+    .save-slot { border: 1px solid rgba(201,168,76,0.15); background: rgba(0,0,0,0.2); padding: 12px; margin-bottom: 10px; display: flex; align-items: center; gap: 12px; }
+    .save-info { flex: 1; text-align: left; }
+    .save-name { font-family: var(--font-body); font-size: 13px; color: var(--parchment); }
+    .save-meta { font-family: var(--font-prose); font-size: 11px; color: var(--smoke-light); font-style: italic; }
+    .save-btn { font-family: var(--font-body); font-size: 10px; padding: 4px 8px; border: 1px solid var(--gold-dim); color: var(--gold); background: none; }
+    
+    .api-setup { max-width: 500px; margin: auto; padding: 24px; text-align: center; }
+    .api-setup h2 { color: var(--gold); font-family: var(--font-title); margin-bottom: 16px; }
+    .api-setup p { color: var(--parchment-dim); font-size: 14px; margin-bottom: 16px; }
+    .api-setup input { width: 100%; text-align: center; font-family: monospace; letter-spacing: 2px; margin-bottom: 16px; }
+    .api-setup a { color: var(--teal-bright); text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- React Code (übersetzt im Browser) -->
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    // ═══════════════════════════════════════════════════
+    // KONFIGURATION & DATEN
+    // ═══════════════════════════════════════════════════
+    const RACES = ["Mensch", "Halbelf", "Waldelf", "Hochelf", "Zwerg", "Halbling", "Tiefling", "Halbork", "Aasimar", "Drow", "Gnome", "Drachengeb."];
+    const CLASSES = ["Krieger", "Magier", "Schurke", "Kleriker", "Waldläufer", "Paladin", "Barbar", "Hexenmeister", "Druide", "Barde", "Mönch", "Nekromant"];
+    const BACKGROUNDS = ["Adliger", "Söldner", "Straßenkind", "Gelehrter", "Händler", "Verbannter", "Kultist", "Schmied", "Dieb", "Priester", "Abenteurer", "Verbrecher"];
+    const TRAITS = ["Zynisch", "Ehrgeizig", "Loyal", "Grausam", "Mitfühlend", "Gierig", "Mutig", "Feige", "Stoisch", "Impulsiv", "Verschlagen", "Ehrenhaft", "Nihilistisch", "Gebrochen", "Rachsüchtig"];
+    
+    const ATTR_NAMES = { STR: "Stärke", DEX: "Geschick", CON: "Konstitution", INT: "Intelligenz", WIS: "Weisheit", CHA: "Charisma" };
+    const ATTR_ICONS = { STR: "⚔️", DEX: "🗡️", CON: "🛡️", INT: "📖", WIS: "🔮", CHA: "👁️" };
+    
+    const getMod = (v) => Math.floor((v - 10) / 2);
+    const modStr = (v) => { const m = getMod(v); return (m >= 0 ? "+" : "") + m; };
+    const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
+    const now = () => new Date().toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" });
+
+    function calcDerived(attrs, charClass, lvl = 1) {
+      const conMod = getMod(attrs.CON);
+      const baseHP = { Krieger: 10, Barbar: 12, Paladin: 10, Kleriker: 8, Druide: 8, Waldläufer: 8, Barde: 8, Schurke: 8, Mönch: 8, Magier: 6, Hexenmeister: 8, Nekromant: 6 };
+      const maxHP = ((baseHP[charClass] || 8) + conMod) * lvl;
+      const maxMP = (8 + getMod(attrs.INT)) * lvl;
+      return { maxHP: Math.max(4, maxHP), maxMP: Math.max(2, maxMP), level: lvl, xp: 0, xpNext: 300 };
+    }
+
+    const SAVE_SLOTS = 3;
+    const defaultSaves = Array(SAVE_SLOTS).fill(null);
+    function loadSaves() { try { return JSON.parse(localStorage.getItem("df_saves") || "null") || defaultSaves; } catch { return defaultSaves; } }
+    function persistSaves(saves) { try { localStorage.setItem("df_saves", JSON.stringify(saves)); } catch {} }
+    function loadOptions() { try { return JSON.parse(localStorage.getItem("df_options") || "null") || { mature: true, imagery: true, autoScroll: true, narratorVerbosity: 2, fontSize: 16 }; } catch { return { mature: true, imagery: true, autoScroll: true, narratorVerbosity: 2, fontSize: 16 }; } }
+    function persistOptions(opts) { try { localStorage.setItem("df_options", JSON.stringify(opts)); } catch {} }
+
+    // ═══════════════════════════════════════════════════
+    // KI API & BILD-CACHE
+    // ═══════════════════════════════════════════════════
+    let API_KEY = ""; // Wird von der Wrapper-Komponente gesetzt
+
+    const globalImgCache = {};
+    const globalPending = new Set();
+    let cacheListeners = [];
+    const notifyCache = () => cacheListeners.forEach(fn => fn());
+
+    async function fetchWithRetry(url, options, maxRetries = 3) {
+      let delays = [1000, 2000, 4000];
+      for (let i = 0; i < maxRetries; i++) {
+        try {
+          const res = await fetch(url, options);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return await res.json();
+        } catch (err) {
+          if (i === maxRetries - 1) throw err;
+          await new Promise(r => setTimeout(r, delays[i]));
+        }
+      }
+    }
+
+    async function callGeminiText(messages, system, maxTokens = 1200) {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${API_KEY}`;
+      const payload = {
+        systemInstruction: { parts: [{ text: system }] },
+        contents: messages.map(m => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] })),
+        generationConfig: { maxOutputTokens: maxTokens, temperature: 0.8 }
+      };
+      const data = await fetchWithRetry(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    }
+
+    async function generateImage(prompt) {
+      // Nutzt das standardmäßige Modell für Bilder via API Key
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict?key=${API_KEY}`;
+      const payload = { instances: { prompt: prompt }, parameters: { sampleCount: 1 } };
+      const data = await fetchWithRetry(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      return `data:image/png;base64,${data.predictions[0].bytesBase64Encoded}`;
+    }
+
+    function requestImage(key, prompt) {
+      if (!API_KEY || globalImgCache[key] || globalPending.has(key)) return;
+      globalPending.add(key);
+      generateImage(prompt).then(src => { globalImgCache[key] = src; notifyCache(); }).catch(() => {}).finally(() => { globalPending.delete(key); });
+    }
+
+    function useImageCache() {
+      const [_, setTick] = useState(0);
+      useEffect(() => { const t = () => setTick(x => x + 1); cacheListeners.push(t); return () => { cacheListeners = cacheListeners.filter(f => f !== t); }; }, []);
+      return globalImgCache;
+    }
+
+    function hashStr(str) { let h = 0; for (let i = 0; i < (str || "x").length; i++) h = (h * 31 + str.charCodeAt(i)) & 0xffffffff; return Math.abs(h); }
+
+    // ── Prompt-Generatoren ──
+    function sceneImageDef(visual, title, mood, idx) { return { key: "sc_" + hashStr(title + idx), prompt: `${visual || title}, ${mood} atmosphere, dark fantasy, highly detailed digital painting, artstation` }; }
+    function charImageDef(char) { return { key: "ch_" + hashStr(char.name + char.race), prompt: `a ${char.race} ${char.class}, ${char.appearance || "intense gaze"}, ${char.background}, dark fantasy portrait, moody lighting, artstation` }; }
+    
+    // ── SVG Fallbacks ──
+    function fallbackSceneSvg(title) {
+      const p = ["#0a0810", "#2a2030", "#6b5b6e", "#06040a"];
+      const s = hashStr(title);
+      const peaks = Array.from({length:7}, (_,i)=>`${i*100},${400-(140+((s>>(i*2))%120))}`).join(" ");
+      return `<svg width="100%" height="100%" viewBox="0 0 600 400" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg"><rect width="600" height="400" fill="${p[1]}"/><circle cx="${120+(s%360)}" cy="90" r="34" fill="${p[2]}" opacity="0.6"/><polygon points="0,400 ${peaks} 600,400" fill="${p[3]}" opacity="0.9"/></svg>`;
+    }
+    function fallbackPortraitSvg(seedText) {
+      const s = hashStr(seedText);
+      const skin = ["#c9a98a", "#a8835f", "#8a6a4a", "#6a5a7a"][s%4];
+      return `<svg width="100%" height="100%" viewBox="0 0 400 500" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg"><rect width="400" height="500" fill="#14100f"/><path d="M70 500 Q70 360 200 320 Q330 360 330 500 Z" fill="#2a1a1a"/><ellipse cx="200" cy="180" rx="62" ry="74" fill="${skin}"/></svg>`;
+    }
+
+    // ── NARRATOR LOGIC ──
+    async function generateNarratorResponse(char, history, worldState, playerInput, options) {
+      const verbosity = options.narratorVerbosity === 1 ? "concise (2 short paragraphs)" : options.narratorVerbosity === 3 ? "elaborate and immersive (5-6 paragraphs)" : "standard (3-4 paragraphs)";
+      const mature = options.mature ? "Mature themes and dark content allowed." : "Keep content PG-13.";
+      const system = `You are the master storyteller of a dark high-fantasy RPG. Write in GERMAN. Address player as "Du".
+CHAR: ${char.name}, ${char.race} ${char.class}. HP:${char.currentHP}/${char.derived.maxHP}.
+RULES: Be ${verbosity}. ${mature} Write plain prose (NO markdown).
+OUTPUT FORMAT: Prose first, then metadata block:
+<<<JSON>>>{"mood":"exploration","sceneTitle":"...","sceneVisual":"...","worldStateUpdates":{},"hpChange":0,"mpChange":0,"xpGain":0,"roll":null}<<<END_JSON>>>`;
+      const msgs = [...history.slice(-8).map(h => ({ role: h.role, content: h.content })), { role: "user", content: playerInput }];
+      return await callGeminiText(msgs, system, 2000);
+    }
+
+    function parseNarratorResponse(raw) {
+      let meta = { hpChange: 0, mpChange: 0, xpGain: 0 }, narration = raw || "";
+      const s = narration.indexOf("<<<JSON>>>");
+      if (s !== -1) {
+        const after = narration.slice(s + 10).replace(/<<<END_JSON>>>/g, "");
+        narration = narration.slice(0, s).replace(/<<<\/?[A-Z_]*>>>/g, "").trim();
+        try { const m = after.match(/\{.*\}/s); if(m) meta = {...meta, ...JSON.parse(m[0])}; } catch(e){}
+      }
+      return { narration, meta };
+    }
+
+    // ═══════════════════════════════════════════════════
+    // UI KOMPONENTEN
+    // ═══════════════════════════════════════════════════
+    function MainMenu({ hasSave, onNew, onLoad, onOptions }) {
+      return (
+        <div className="screen menu-screen">
+          <div className="menu-title-wrap"><div className="menu-sep"/><div className="menu-title">Aschenpfad</div><div className="menu-subtitle">Dark Fantasy P&P</div><div className="menu-sep"/></div>
+          <div className="menu-buttons">
+            <button className="btn-menu primary" onClick={onNew}>⚔ Neues Spiel</button>
+            <button className="btn-menu" onClick={onLoad}>📜 Spielstand laden / Import</button>
+            <button className="btn-menu" onClick={onOptions}>⚙ Einstellungen</button>
+          </div>
+          <div className="menu-version">PWA Standalone Version</div>
+        </div>
+      );
+    }
+
+    function CharacterCreation({ onComplete, onBack }) {
+      const [name, setName] = useState("");
+      const [race, setRace] = useState("");
+      const [charClass, setCharClass] = useState("");
+      const [background, setBackground] = useState("");
+      const [attrs, setAttrs] = useState({ STR: 8, DEX: 8, CON: 8, INT: 8, WIS: 8, CHA: 8 });
+      const [traits, setTraits] = useState([]);
+      
+      const spent = Object.values(attrs).reduce((a, v) => a + (v <= 13 ? v - 8 : (v - 8) + (v - 13)), 0);
+      const remaining = 27 - spent;
+      
+      const finish = () => {
+        const derived = calcDerived(attrs, charClass, 1);
+        onComplete({ name, race, class: charClass, background, traits, attrs, derived, currentHP: derived.maxHP, currentMP: derived.maxMP, inventory: [] });
+      };
+
+      return (
+        <div className="screen">
+          <div className="creation-header">Charaktererschaffung</div>
+          <div className="creation-body">
+            <div className="creation-section" data-title="Identität"><input className="text-input" value={name} onChange={e=>setName(e.target.value)} placeholder="Dein Name..." /></div>
+            <div className="creation-section" data-title="Rasse"><div className="grid-3">{RACES.map(r=><div key={r} className={`select-card ${race===r?"active":""}`} onClick={()=>setRace(r)}>{r}</div>)}</div></div>
+            <div className="creation-section" data-title="Klasse"><div className="grid-3">{CLASSES.map(c=><div key={c} className={`select-card ${charClass===c?"active":""}`} onClick={()=>setCharClass(c)}>{c}</div>)}</div></div>
+            <div className="creation-section" data-title="Herkunft"><div className="grid-3">{BACKGROUNDS.map(b=><div key={b} className={`select-card ${background===b?"active":""}`} onClick={()=>setBackground(b)}>{b}</div>)}</div></div>
+            <div className="creation-section" data-title="Attribute">
+              <div className="points-left">Punkte: {remaining}</div>
+              <div className="attr-grid">{Object.keys(attrs).map(k=>(
+                <div key={k} className="attr-card">
+                  <div className="attr-name">{ATTR_NAMES[k]}</div>
+                  <div className="attr-controls">
+                    <button className="attr-btn" onClick={()=>setAttrs(p=>({...p, [k]: Math.max(8, p[k]-1)}))}>-</button>
+                    <span className="attr-val">{attrs[k]}</span>
+                    <button className="attr-btn" onClick={()=>setAttrs(p=>({...p, [k]: Math.min(15, p[k]+1)}))} disabled={remaining < (attrs[k]>=13?2:1)}>+</button>
+                  </div>
+                </div>
+              ))}</div>
+            </div>
+            <div className="creation-section" data-title="Eigenschaften (max 3)"><div style={{display:'flex', flexWrap:'wrap'}}>{TRAITS.map(t=><div key={t} className={`trait-tag ${traits.includes(t)?"active":""}`} onClick={()=>setTraits(p=>p.includes(t)?p.filter(x=>x!==t):p.length<3?[...p,t]:p)}>{t}</div>)}</div></div>
+          </div>
+          <div className="creation-footer">
+            <button className="btn-action danger" onClick={onBack}>Abbrechen</button>
+            <button className="btn-action" onClick={finish} disabled={!name || !race || !charClass || !background}>Erschaffen</button>
+          </div>
+        </div>
+      );
+    }
+
+    function GameScreen({ char, initMsgs, initWs, options, saves, setSaves, onMenu }) {
+      const [messages, setMessages] = useState(initMsgs);
+      const [input, setInput] = useState("");
+      const [loading, setLoading] = useState(false);
+      const [sceneTitle, setSceneTitle] = useState("Die Welt erwacht...");
+      const [sceneVisual, setSceneVisual] = useState("");
+      const [sceneKey, setSceneKey] = useState(null);
+      const [showMenu, setShowMenu] = useState(false);
+      
+      const imgCache = useImageCache();
+      const narrative = useRef(null);
+      const sceneIdx = useRef(0);
+
+      useEffect(() => { if(options.imagery) requestImage(charImageDef(char).key, charImageDef(char).prompt); }, []);
+      useEffect(() => { if(messages.length === 0) triggerOpening(); }, []);
+      useEffect(() => { if(narrative.current) narrative.current.scrollTop = narrative.current.scrollHeight; }, [messages, loading]);
+
+      const processMeta = (meta) => {
+        if(meta.sceneTitle) setSceneTitle(meta.sceneTitle);
+        if(meta.sceneVisual && options.imagery) {
+          sceneIdx.current++;
+          const def = sceneImageDef(meta.sceneVisual, meta.sceneTitle, meta.mood||"neutral", sceneIdx.current);
+          setSceneKey(def.key);
+          requestImage(def.key, def.prompt);
+        }
+      };
+
+      const triggerOpening = async () => {
+        setLoading(true);
+        const raw = await generateNarratorResponse(char, [], {}, `Eröffne das Spiel für ${char.name}, ${char.race} ${char.class}.`, options);
+        const { narration, meta } = parseNarratorResponse(raw);
+        setMessages([{ role: "assistant", content: raw, type: "narrator", narration }]);
+        processMeta(meta);
+        setLoading(false);
+      };
+
+      const handleSend = async () => {
+        if(!input.trim() || loading) return;
+        const txt = input.trim(); setInput(""); setLoading(true);
+        const history = messages.filter(m=>m.role==="user"||m.role==="assistant").map(m=>({role:m.role, content:m.content}));
+        try {
+          const raw = await generateNarratorResponse(char, history, {}, txt, options);
+          const { narration, meta } = parseNarratorResponse(raw);
+          setMessages(p => [...p, {role:"user", content:txt, type:"player"}, {role:"assistant", content:raw, type:"narrator", narration}]);
+          processMeta(meta);
+        } catch(e) { setMessages(p => [...p, {type:"system", content:"Verbindung abgebrochen."}]); }
+        setLoading(false);
+      };
+
+      const doSave = () => {
+        const ns = [...saves]; ns[0] = { char, messages, savedAt: now() }; 
+        setSaves(ns); persistSaves(ns); setShowMenu(false); alert("Gespeichert in Slot 1");
+      };
+
+      return (
+        <div className="screen game-screen">
+          {showMenu && (
+            <div className="modal-overlay" onClick={()=>setShowMenu(false)}>
+              <div className="modal-box" onClick={e=>e.stopPropagation()}>
+                <h3 style={{color:"var(--gold)", marginBottom: 20}}>Menü</h3>
+                <div style={{display:"flex", flexDirection:"column", gap:10}}>
+                  <button className="btn-menu" onClick={()=>setShowMenu(false)}>Weiter</button>
+                  <button className="btn-menu" onClick={doSave}>Speichern (Slot 1)</button>
+                  <button className="btn-menu danger" onClick={onMenu}>Beenden</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="game-main">
+            <div className="game-topbar">
+              <div className="topbar-title">{sceneTitle}</div>
+              <button className="topbar-btn" onClick={()=>setShowMenu(true)}>☰ Menü</button>
+            </div>
+            
+            <div className="scene-image-area">
+              {sceneKey && imgCache[sceneKey] ? <img src={imgCache[sceneKey]} style={{width:"100%", height:"100%", objectFit:"cover"}}/> : <div className="scene-loading">...</div>}
+              <div className="scene-image-overlay" />
+              <div className="scene-title-overlay">{sceneTitle}</div>
+            </div>
+
+            <div className="narrative-area" ref={narrative}>
+              {messages.map((m,i) => {
+                if(m.type === "narrator") return <div key={i} className="narr-narrator">{(m.narration||"").split(/\n+/).map((p,j)=><p key={j} style={{marginTop: j?10:0}}>{p}</p>)}</div>;
+                if(m.type === "player") return <div key={i} className="narr-player">Du: {m.content}</div>;
+                return <div key={i} className="narr-system">{m.content}</div>;
+              })}
+              {loading && <div style={{textAlign:"center", color:"var(--blood)"}}>...</div>}
+            </div>
+
+            <div className="input-area">
+              <textarea className="game-input" value={input} onChange={e=>setInput(e.target.value)} placeholder="Was tust du?" disabled={loading} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault(); handleSend();}}}/>
+              <button className="send-btn" onClick={handleSend} disabled={loading||!input.trim()}>→</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function SavesScreen({ saves, onLoad, onBack, setSaves }) {
+      const [imp, setImp] = useState("");
+      
+      const doExport = () => {
+        navigator.clipboard.writeText(btoa(encodeURIComponent(JSON.stringify(saves)))).then(()=>alert("Code kopiert!")).catch(()=>alert("Kopieren blockiert"));
+      };
+      const doImport = () => {
+        try { const d = JSON.parse(decodeURIComponent(atob(imp))); setSaves(d); persistSaves(d); alert("Importiert!"); } catch(e) { alert("Code fehlerhaft"); }
+      };
+
+      return (
+        <div className="screen" style={{alignItems:"center", justifyContent:"center"}}>
+          <div className="saves-panel">
+            <h2 style={{color:"var(--gold)", textAlign:"center", marginBottom:20}}>Spielstände</h2>
+            {saves.map((s,i) => (
+              <div key={i} className="save-slot" onClick={()=>s&&onLoad(i)}>
+                {s ? `Slot ${i+1}: ${s.char?.name} (${s.savedAt})` : `Slot ${i+1} (Leer)`}
+              </div>
+            ))}
+            
+            <div style={{marginTop: 30, borderTop:"1px solid var(--gold-dim)", paddingTop: 20}}>
+              <p style={{fontSize: 12, color:"var(--gold-dim)", marginBottom:10}}>Sicherung via Code</p>
+              <div style={{display:"flex", gap:10}}><button className="btn-action" onClick={doExport}>Exportieren</button></div>
+              <textarea className="textarea-input" style={{minHeight:60, marginTop:10, fontSize:10}} placeholder="Code hier einfügen..." value={imp} onChange={e=>setImp(e.target.value)} />
+              <button className="btn-action" style={{marginTop:10, width:"100%"}} onClick={doImport}>Importieren</button>
+            </div>
+            
+            <button className="btn-action danger" style={{marginTop: 20}} onClick={onBack}>Zurück</button>
+          </div>
+        </div>
+      );
+    }
+
+    // ═══════════════════════════════════════════════════
+    // APP WRAPPER (API-SCHLÜSSEL LOGIK)
+    // ═══════════════════════════════════════════════════
+    function MainApp() {
+      const [screen, setScreen] = useState("menu");
+      const [char, setChar] = useState(null);
+      const [messages, setMessages] = useState([]);
+      const [options, setOptions] = useState(loadOptions());
+      const [saves, setSaves] = useState(loadSaves());
+
+      const handleLoad = (slot) => { const s = saves[slot]; if(s) { setChar(s.char); setMessages(s.messages); setScreen("game"); } };
+
+      return (
+        <div className="app">
+          {screen === "menu" && <MainMenu hasSave={saves.some(Boolean)} onNew={()=>setScreen("creation")} onLoad={()=>setScreen("saves")} onOptions={()=>alert("Optionen in dieser Demo vereinfacht.")}/>}
+          {screen === "creation" && <CharacterCreation onComplete={(c)=>{setChar(c); setMessages([]); setScreen("game");}} onBack={()=>setScreen("menu")} />}
+          {screen === "saves" && <SavesScreen saves={saves} setSaves={setSaves} onLoad={handleLoad} onBack={()=>setScreen("menu")} />}
+          {screen === "game" && <GameScreen char={char} initMsgs={messages} options={options} saves={saves} setSaves={setSaves} onMenu={()=>setScreen("menu")} />}
+        </div>
+      );
+    }
+
+    function AppWrapper() {
+      const [key, setKey] = useState(localStorage.getItem("df_api_key") || "");
+      const [isSetup, setIsSetup] = useState(!key);
+
+      const saveKey = () => { localStorage.setItem("df_api_key", key); API_KEY = key; setIsSetup(false); };
+
+      if (isSetup) {
+        return (
+          <div className="app" style={{justifyContent:"center", alignItems:"center", padding:20}}>
+            <div className="api-setup">
+              <h2>Willkommen bei Aschenpfad</h2>
+              <p>Da du diese App als eigenständige Version (Standalone) ausführst, benötigst du einen eigenen KI-Zugangsschlüssel, um die Texte und Bilder zu generieren.</p>
+              <p>Hole dir einen kostenlosen Schlüssel unter <a href="https://aistudio.google.com/app/apikey" target="_blank">Google AI Studio</a> und füge ihn hier ein:</p>
+              <input type="password" placeholder="AIzaSy..." value={key} onChange={e=>setKey(e.target.value)} className="text-input" />
+              <button className="btn-action" onClick={saveKey} disabled={!key}>Spiel Starten</button>
+            </div>
+          </div>
+        );
+      }
+
+      API_KEY = key;
+      return <MainApp />;
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<AppWrapper />);
+  </script>
+</body>
+</html>
